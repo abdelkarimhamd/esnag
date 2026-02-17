@@ -12,7 +12,7 @@ import {
   TableRow,
   Typography,
 } from '@mui/material'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link as RouterLink, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
@@ -49,7 +49,7 @@ export const ProjectDashboardPage = () => {
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!projectId) {
       return
     }
@@ -66,11 +66,17 @@ export const ProjectDashboardPage = () => {
     } catch (requestError) {
       setError(parseApiError(requestError, 'Unable to load project dashboard.'))
     }
-  }
+  }, [projectId])
 
   useEffect(() => {
-    void load()
-  }, [projectId])
+    const timeoutId = window.setTimeout(() => {
+      void load()
+    }, 0)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [load])
 
   const drawings = useMemo(() => project?.drawings ?? [], [project])
 
@@ -185,4 +191,3 @@ export const ProjectDashboardPage = () => {
     </Stack>
   )
 }
-
