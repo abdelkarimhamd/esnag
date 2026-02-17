@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Badge, Box, IconButton, List, ListItem, ListItemText, Menu, MenuItem, Typography } from '@mui/material'
 import NotificationsOutlinedIcon from '@mui/icons-material/NotificationsOutlined'
 import { api } from '../api/client'
@@ -100,7 +100,7 @@ export const NotificationsMenu = ({ canView }: { canView: boolean }) => {
 
   const open = Boolean(anchorEl)
 
-  const loadNotifications = async () => {
+  const loadNotifications = useCallback(async () => {
     if (!canView) {
       return
     }
@@ -108,15 +108,21 @@ export const NotificationsMenu = ({ canView }: { canView: boolean }) => {
     const response = await api.get<{ data: NotificationRecord[]; meta: { unread_count: number } }>('/api/notifications')
     setNotifications(response.data.data)
     setUnreadCount(response.data.meta.unread_count)
-  }
+  }, [canView])
 
   useEffect(() => {
     if (!canView) {
       return
     }
 
-    void loadNotifications()
-  }, [canView])
+    const timeoutId = window.setTimeout(() => {
+      void loadNotifications()
+    }, 0)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [canView, loadNotifications])
 
   useEffect(() => {
     if (!canView || !activeOrganization) {
@@ -138,7 +144,7 @@ export const NotificationsMenu = ({ canView }: { canView: boolean }) => {
     return () => {
       unsubscribe()
     }
-  }, [canView, activeOrganization?.id])
+  }, [canView, activeOrganization, activeOrganization?.id, loadNotifications])
 
   const hasUnread = useMemo(() => unreadCount > 0, [unreadCount])
 

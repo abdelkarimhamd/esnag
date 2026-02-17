@@ -25,7 +25,7 @@ export const useFeatureTour = ({ tourKey, enabled, steps }: UseFeatureTourOption
       return
     }
 
-    let tour: any = null
+    let tour: Shepherd.Tour | null = null
     let disposed = false
 
     const run = async () => {
@@ -64,8 +64,8 @@ export const useFeatureTour = ({ tourKey, enabled, steps }: UseFeatureTourOption
           })
         })
 
-        tour.on('show', async (event: any) => {
-          const step = event.step
+        tour.on('show', async (event: unknown) => {
+          const step = typeof event === 'object' && event !== null && 'step' in event ? event.step : null
           const index = tour?.steps.indexOf(step) ?? 0
           try {
             await api.put(`/api/onboarding/${tourKey}`, { current_step: index })
