@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "eSnagging Mobile",
+    "slug": "esnagging-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "esnagging",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [
+      "expo-notifications",
+      "expo-secure-store",
+      "expo-sqlite"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.esnagging.mobile"
+    },
+    "android": {
+      "package": "com.esnagging.mobile"
+    },
+    "extra": {
+      "apiUrl": "${EXPO_PUBLIC_API_URL}"
+    }
+  }
+}

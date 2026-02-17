@@ -1,0 +1,105 @@
+<?php
+
+namespace App\Support;
+
+class PermissionPresetCatalog
+{
+    /**
+     * @return array<string, array{name: string, description: string, permissions: array<int, string>}>
+     */
+    public static function all(): array
+    {
+        return [
+            'owner' => [
+                'name' => 'Owner Pack',
+                'description' => 'Executive visibility and full governance controls across project workflows.',
+                'permissions' => PermissionCatalog::all(),
+            ],
+            'consultant' => [
+                'name' => 'Consultant Pack',
+                'description' => 'Review, coordination, and approval responsibilities without tenant administration.',
+                'permissions' => [
+                    'projects.view',
+                    'drawings.view',
+                    'drawings.manage',
+                    'snags.view',
+                    'snags.create',
+                    'snags.update',
+                    'snags.assign',
+                    'snags.transition',
+                    'snags.comment',
+                    'snags.attach',
+                    'automation.view',
+                    'automation.manage',
+                    'kanban.view',
+                    'dashboard.view',
+                    'closeout.templates.view',
+                    'closeout.instances.view',
+                    'closeout.instances.update',
+                    'closeout.review',
+                    'exports.view',
+                    'exports.request',
+                    'exports.download',
+                    'inspections.templates.view',
+                    'inspections.recurring.view',
+                    'inspections.recurring.manage',
+                    'inspections.submissions.view',
+                    'inspections.approvals.review',
+                    'inspections.signatures.sign',
+                    'inspections.requests.view',
+                    'inspections.requests.manage',
+                    'inspections.reports.view',
+                    'inspections.reports.export',
+                    'equipment.view',
+                    'equipment.maintenance.log',
+                    'notification.preferences.manage',
+                    'mobile.sync',
+                    'notifications.view',
+                    'onboarding.update',
+                ],
+            ],
+            'contractor' => [
+                'name' => 'Contractor Pack',
+                'description' => 'Execution-focused controls for snagging, closeout delivery, and evidence capture.',
+                'permissions' => [
+                    'projects.view',
+                    'drawings.view',
+                    'snags.view',
+                    'snags.create',
+                    'snags.update',
+                    'snags.assign',
+                    'snags.transition',
+                    'snags.comment',
+                    'snags.attach',
+                    'automation.view',
+                    'kanban.view',
+                    'dashboard.view',
+                    'closeout.templates.view',
+                    'closeout.instances.view',
+                    'closeout.instances.update',
+                    'exports.view',
+                    'exports.request',
+                    'exports.download',
+                    'inspections.templates.view',
+                    'inspections.recurring.view',
+                    'inspections.submissions.view',
+                    'inspections.submissions.create',
+                    'inspections.submissions.update',
+                    'inspections.submissions.submit',
+                    'inspections.signatures.sign',
+                    'inspections.requests.view',
+                    'inspections.requests.manage',
+                    'inspections.reports.view',
+                    'inspections.reports.export',
+                    'equipment.view',
+                    'equipment.manage',
+                    'equipment.maintenance.log',
+                    'notification.preferences.manage',
+                    'mobile.sync',
+                    'notifications.view',
+                    'onboarding.update',
+                ],
+            ],
+        ];
+    }
+}

@@ -1,0 +1,17 @@
+name: Staging Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Staging config placeholder
+        run: |
+          echo "Configure STAGING_HOST, STAGING_SSH_KEY, and deployment commands in this workflow."
+          echo "This pipeline is intentionally a non-destructive template for staging rollout hardening."
