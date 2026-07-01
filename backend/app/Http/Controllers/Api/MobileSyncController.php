@@ -33,7 +33,7 @@ class MobileSyncController extends Controller
     public function pull(Request $request): JsonResponse
     {
         if (! $request->user()->can('mobile.sync')) {
-            abort(403);
+            $this->denyWithPermissions($request, ['mobile.sync'], 'You do not have permission to use mobile sync.');
         }
 
         $organization = $this->currentOrganization($request);
@@ -210,7 +210,7 @@ class MobileSyncController extends Controller
     public function apply(Request $request): JsonResponse
     {
         if (! $request->user()->can('mobile.sync')) {
-            abort(403);
+            $this->denyWithPermissions($request, ['mobile.sync'], 'You do not have permission to use mobile sync.');
         }
 
         $organization = $this->currentOrganization($request);
@@ -237,6 +237,43 @@ class MobileSyncController extends Controller
             $request->user(),
             $operations,
         );
+
+        $results = collect($results)
+            ->map(function (array $row): array {
+                $status = (string) ($row['status'] ?? 'failed');
+                $resultPayload = isset($row['result']) && is_array($row['result']) ? $row['result'] : [];
+                $errorsPayload = isset($row['errors']) && is_array($row['errors']) ? $row['errors'] : [];
+
+                $isDataConflict = $status === 'applied' && (bool) ($resultPayload['conflict'] ?? false);
+                $isStatusTransitionGuard = $status === 'rejected' && array_key_exists('to_status', $errorsPayload);
+
+                $retryable = match (true) {
+                    $status === 'failed' => true,
+                    $isDataConflict => true,
+                    default => false,
+                };
+
+                $retryAfterSeconds = match (true) {
+                    $status === 'failed' => 30,
+                    $isDataConflict => 10,
+                    default => null,
+                };
+
+                $conflictType = match (true) {
+                    $isDataConflict => 'stale_update',
+                    $isStatusTransitionGuard => 'status_transition_guarded',
+                    default => null,
+                };
+
+                return [
+                    ...$row,
+                    'retryable' => $retryable,
+                    'retry_after_seconds' => $retryAfterSeconds,
+                    'conflict_type' => $conflictType,
+                ];
+            })
+            ->values()
+            ->all();
 
         $typeByOpId = collect($operations)
             ->mapWithKeys(fn (array $operation) => [
@@ -283,7 +320,7 @@ class MobileSyncController extends Controller
             'meta' => [
                 'server_time' => Carbon::now()->toISOString(),
                 'retry_recommended_for' => collect($results)
-                    ->filter(fn (array $row) => in_array($row['status'], ['failed'], true))
+                    ->filter(fn (array $row) => (bool) ($row['retryable'] ?? false))
                     ->pluck('op_id')
                     ->values(),
             ],

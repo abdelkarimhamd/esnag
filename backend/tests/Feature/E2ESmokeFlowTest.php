@@ -74,6 +74,9 @@ class E2ESmokeFlowTest extends TestCase
         ]);
 
         $loginResponse->assertOk();
+        $featureFlags = (array) $loginResponse->json('organizations.0.feature_flags');
+        $this->assertArrayHasKey('ui.simple_first_v1', $featureFlags);
+        $this->assertTrue((bool) $featureFlags['ui.simple_first_v1']);
         $token = (string) $loginResponse->json('token');
         $this->assertNotSame('', $token);
 
@@ -146,6 +149,23 @@ class E2ESmokeFlowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.0.status', 'applied')
             ->assertJsonPath('data.0.result.status', SnagStatus::Assigned->value);
+
+        $this->withHeaders($headers)
+            ->getJson("/api/snags/{$snagId}")
+            ->assertOk()
+            ->assertJsonPath('data.workflow.current_status', SnagStatus::Assigned->value)
+            ->assertJsonPath('data.workflow.recommended_next_status', SnagStatus::InProgress->value);
+
+        $this->withHeaders($headers)
+            ->getJson('/api/projects?per_page=10&sort=recent_activity')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $project->id);
+
+        $this->withHeaders($headers)
+            ->getJson("/api/kanban/snags?project_id={$project->id}&scope=mine&due_window=all")
+            ->assertOk()
+            ->assertJsonPath('data.filters.scope', 'mine')
+            ->assertJsonPath('data.filters.due_window', 'all');
 
         $equipmentResponse = $this->withHeaders($headers)
             ->postJson('/api/equipment', [

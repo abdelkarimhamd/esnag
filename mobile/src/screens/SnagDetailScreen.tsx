@@ -2,19 +2,22 @@ import * as ImagePicker from 'expo-image-picker'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { useFocusEffect } from '@react-navigation/native'
 import { useCallback, useState } from 'react'
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Alert, Text, View } from 'react-native'
 import { optimizePickedAsset } from '../attachments/processing'
 import type { SnagsStackParamList } from '../navigation/types'
 import { findLocalSnag, findLocalSnagByServerId, listAttachmentsForSnag, listCommentsForSnag } from '../db/store'
 import type { LocalAttachmentRecord, LocalCommentRecord, LocalSnagRecord, SnagStatus } from '../types'
 import { enqueueAttachmentUpload, enqueueOfflineCommentCreate, enqueueOfflineSnagTransition } from '../sync/operations'
 import { useSync } from '../sync/SyncProvider'
+import { useAppTheme } from '../theme/ThemeProvider'
+import { Button, Card, EmptyState, ListItem, ScreenContainer, SectionHeader, Select, StatusPill, TextField } from '../ui'
 
 type Props = NativeStackScreenProps<SnagsStackParamList, 'SnagDetail'>
 
 const transitionPath: SnagStatus[] = ['new', 'assigned', 'in_progress', 'ready_for_review', 'closed', 'rejected']
 
 export const SnagDetailScreen = ({ route, navigation }: Props) => {
+  const theme = useAppTheme()
   const { refreshQueueSize } = useSync()
   const [snag, setSnag] = useState<LocalSnagRecord | null>(null)
   const [comments, setComments] = useState<LocalCommentRecord[]>([])
@@ -156,202 +159,79 @@ export const SnagDetailScreen = ({ route, navigation }: Props) => {
 
   if (!snag) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.muted}>Snag not found locally.</Text>
-      </View>
+      <ScreenContainer>
+        <EmptyState title="Snag not found" message="The selected snag is not available in local storage." />
+      </ScreenContainer>
     )
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.reference}>{snag.reference ?? 'Offline Draft'}</Text>
-      <Text style={styles.title}>{snag.title}</Text>
-      <Text style={styles.meta}>
-        {snag.status.replaceAll('_', ' ')} | priority {snag.priority} | dirty {snag.is_dirty ? 'yes' : 'no'}
+    <ScreenContainer scroll>
+      <SectionHeader
+        title={snag.title}
+        subtitle={snag.reference ?? 'Offline draft'}
+        right={<StatusPill label={snag.status.replaceAll('_', ' ')} tone={snag.status === 'closed' ? 'success' : 'info'} />}
+      />
+      <Text style={{ color: theme.colors.textMuted }}>
+        Priority {snag.priority} • Dirty {snag.is_dirty ? 'yes' : 'no'}
       </Text>
-      {snag.description ? <Text style={styles.description}>{snag.description}</Text> : null}
+      {snag.description ? <Text style={{ color: theme.colors.text }}>{snag.description}</Text> : null}
 
-      <View style={styles.block}>
-        <Text style={styles.blockTitle}>Queue Status Transition</Text>
-        <View style={styles.chipWrap}>
-          {transitionPath.map((status) => (
-            <Pressable key={status} onPress={() => setNextStatus(status)} style={[styles.chip, nextStatus === status && styles.chipActive]}>
-              <Text style={[styles.chipText, nextStatus === status && styles.chipTextActive]}>{status.replaceAll('_', ' ')}</Text>
-            </Pressable>
-          ))}
-        </View>
-        <Pressable style={styles.primaryButton} onPress={queueTransition}>
-          <Text style={styles.primaryButtonText}>Queue Transition</Text>
-        </Pressable>
-      </View>
+      <Card elevated>
+        <SectionHeader title="Take Action" subtitle="Queue server-validated status transitions." />
+        <Select
+          value={nextStatus}
+          onChange={(value) => setNextStatus(value as SnagStatus)}
+          options={transitionPath.map((status) => ({ value: status, label: status.replaceAll('_', ' ') }))}
+        />
+        <Button label="Queue Transition" onPress={queueTransition} />
+      </Card>
 
-      <View style={styles.block}>
-        <Text style={styles.blockTitle}>Comments</Text>
-        <TextInput
+      <Card elevated>
+        <SectionHeader title="Comments" subtitle={`${comments.length} local`} />
+        <TextField
           placeholder="Add comment"
-          style={[styles.input, styles.multiline]}
-          multiline
           value={commentBody}
           onChangeText={setCommentBody}
+          multiline
+          style={{ minHeight: 80, textAlignVertical: 'top' }}
         />
-        <Pressable style={styles.secondaryButton} onPress={queueComment}>
-          <Text style={styles.secondaryButtonText}>Queue Comment</Text>
-        </Pressable>
+        <Button label="Queue Comment" variant="secondary" onPress={queueComment} />
+        {comments.length === 0 ? (
+          <EmptyState title="No comments" message="Sync first, then add discussion comments." />
+        ) : (
+          <View style={{ gap: 8 }}>
+            {comments.map((comment) => (
+              <ListItem
+                key={comment.local_id}
+                title={comment.body}
+                subtitle={new Date(comment.created_at).toLocaleString()}
+              />
+            ))}
+          </View>
+        )}
+      </Card>
 
-        <View style={styles.stack}>
-          {comments.length === 0 ? <Text style={styles.muted}>No local comments.</Text> : null}
-          {comments.map((comment) => (
-            <View key={comment.local_id} style={styles.itemCard}>
-              <Text style={styles.itemText}>{comment.body}</Text>
-              <Text style={styles.itemMeta}>{new Date(comment.created_at).toLocaleString()}</Text>
-            </View>
-          ))}
+      <Card elevated>
+        <SectionHeader title="Attachments" subtitle={`${attachments.length} local`} />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          <Button label="Add Attachment" variant="secondary" size="sm" onPress={() => void addAttachment()} />
+          <Button label="Add + Annotate" variant="secondary" size="sm" onPress={() => void addAnnotatedAttachment()} />
         </View>
-      </View>
-
-      <View style={styles.block}>
-        <Text style={styles.blockTitle}>Attachments</Text>
-        <Pressable style={styles.secondaryButton} onPress={() => void addAttachment()}>
-          <Text style={styles.secondaryButtonText}>Add Attachment (Optimized)</Text>
-        </Pressable>
-        <Pressable style={styles.secondaryButton} onPress={() => void addAnnotatedAttachment()}>
-          <Text style={styles.secondaryButtonText}>Add + Annotate Offline</Text>
-        </Pressable>
-
-        <View style={styles.stack}>
-          {attachments.length === 0 ? <Text style={styles.muted}>No local attachments.</Text> : null}
-          {attachments.map((attachment) => (
-            <View key={attachment.local_id} style={styles.itemCard}>
-              <Text style={styles.itemText}>{attachment.file_name}</Text>
-              <Text style={styles.itemMeta}>
-                {attachment.upload_state} | retries {attachment.retries}
-              </Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    </ScrollView>
+        {attachments.length === 0 ? (
+          <EmptyState title="No attachments" message="Attachments are queued and uploaded during sync." />
+        ) : (
+          <View style={{ gap: 8 }}>
+            {attachments.map((attachment) => (
+              <ListItem
+                key={attachment.local_id}
+                title={attachment.file_name}
+                subtitle={`${attachment.upload_state} • retries ${attachment.retries}`}
+              />
+            ))}
+          </View>
+        )}
+      </Card>
+    </ScreenContainer>
   )
 }
-
-const styles = StyleSheet.create({
-  container: {
-    padding: 16,
-    backgroundColor: '#F8FAFC',
-    gap: 12,
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-  },
-  reference: {
-    color: '#0369A1',
-    fontWeight: '700',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  meta: {
-    color: '#475569',
-    textTransform: 'capitalize',
-  },
-  description: {
-    color: '#334155',
-  },
-  block: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#E2E8F0',
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    gap: 8,
-  },
-  blockTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  chipWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  chip: {
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  chipActive: {
-    borderColor: '#0E7490',
-    backgroundColor: '#CCFBF1',
-  },
-  chipText: {
-    color: '#475569',
-    textTransform: 'capitalize',
-  },
-  chipTextActive: {
-    color: '#115E59',
-    fontWeight: '700',
-  },
-  input: {
-    borderColor: '#CBD5E1',
-    borderWidth: 1,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  multiline: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  primaryButton: {
-    alignItems: 'center',
-    backgroundColor: '#0F766E',
-    borderRadius: 10,
-    paddingVertical: 11,
-  },
-  primaryButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderColor: '#0EA5E9',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 10,
-    backgroundColor: '#F0F9FF',
-  },
-  secondaryButtonText: {
-    color: '#0369A1',
-    fontWeight: '700',
-  },
-  stack: {
-    gap: 8,
-  },
-  itemCard: {
-    borderColor: '#E2E8F0',
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 10,
-  },
-  itemText: {
-    color: '#0F172A',
-    fontWeight: '600',
-  },
-  itemMeta: {
-    color: '#64748B',
-    marginTop: 3,
-    fontSize: 12,
-  },
-  muted: {
-    color: '#64748B',
-  },
-})

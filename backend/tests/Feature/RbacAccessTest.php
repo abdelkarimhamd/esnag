@@ -44,7 +44,9 @@ class RbacAccessTest extends TestCase
                 'name' => 'Unauthorized Project',
                 'code' => 'UP-01',
             ])
-            ->assertForbidden();
+            ->assertForbidden()
+            ->assertJsonPath('code', 'forbidden')
+            ->assertJsonPath('request_id', fn ($value) => is_string($value) && $value !== '');
     }
 }
 

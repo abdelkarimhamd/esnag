@@ -1,39 +1,25 @@
 import type { RouteProp } from '@react-navigation/native'
-import { StyleSheet, Text, View } from 'react-native'
+import { Text } from 'react-native'
 import type { SnagsStackParamList } from '../navigation/types'
+import { useAppTheme } from '../theme/ThemeProvider'
+import { Card, ScreenContainer, SectionHeader } from '../ui'
 
 interface Props {
   route: RouteProp<SnagsStackParamList, 'InspectionDetail'>
 }
 
 export const InspectionLinkScreen = ({ route }: Props) => {
+  const theme = useAppTheme()
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Inspection Deep Link</Text>
-      <Text style={styles.body}>
-        Inspection #{route.params?.inspectionId ?? 'N/A'} was opened from a push notification.
-      </Text>
-      <Text style={styles.body}>
-        Offline inspection forms are available in the web module. Mobile currently focuses on snagging and equipment in this phase.
-      </Text>
-    </View>
+    <ScreenContainer scroll>
+      <SectionHeader title="Inspection Deep Link" subtitle={`Inspection #${route.params?.inspectionId ?? 'N/A'}`} />
+      <Card elevated>
+        <Text style={{ color: theme.colors.text }}>
+          This screen was opened from a deep link or push notification and keeps route compatibility with the
+          existing inspection flow.
+        </Text>
+      </Card>
+    </ScreenContainer>
   )
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    padding: 20,
-    gap: 10,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  body: {
-    color: '#334155',
-    lineHeight: 20,
-  },
-})

@@ -18,9 +18,12 @@ use App\Policies\InspectionSubmissionPolicy;
 use App\Policies\InspectionTemplatePolicy;
 use App\Policies\ProjectPolicy;
 use App\Policies\SnagPolicy;
+use Illuminate\Auth\Events\Authenticated;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -47,6 +50,13 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(InspectionSubmission::class, InspectionSubmissionPolicy::class);
         Gate::policy(InspectionRequest::class, InspectionRequestPolicy::class);
         Gate::policy(Equipment::class, EquipmentPolicy::class);
+
+        // Enrich the shared log context with the authenticated user id as soon as a
+        // guard resolves the user (after the api-group middleware runs), so logs
+        // emitted by controllers/services carry user correlation. See AttachRequestContext.
+        Event::listen(Authenticated::class, function (Authenticated $event): void {
+            Log::withContext(['user_id' => $event->user->getAuthIdentifier()]);
+        });
 
         RateLimiter::for('api', function (Request $request): Limit {
             $key = $request->user()?->id ? 'user:'.$request->user()->id : 'ip:'.$request->ip();

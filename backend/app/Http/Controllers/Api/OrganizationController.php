@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\Concerns\InteractsWithOrganizationContext;
 use App\Http\Controllers\Controller;
 use App\Models\Project;
 use App\Services\AccessControlService;
+use App\Services\FeatureFlagService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -15,6 +16,7 @@ class OrganizationController extends Controller
 
     public function __construct(
         private readonly AccessControlService $accessControlService,
+        private readonly FeatureFlagService $featureFlagService,
     ) {
     }
 
@@ -26,8 +28,16 @@ class OrganizationController extends Controller
             ->wherePivot('is_active', true)
             ->orderBy('organizations.name')
             ->withCount('users')
-            ->get(['organizations.id', 'organizations.name', 'organizations.code'])
-            ->map(function ($organization) use ($user) {
+            ->get(['organizations.id', 'organizations.name', 'organizations.code']);
+
+        // Resolve feature flags for all organizations in one query instead of one
+        // query per organization inside the map() (N+1).
+        $flagsByOrganization = $this->featureFlagService->resolvedFlagsForOrganizations(
+            $organizations->pluck('id')->all()
+        );
+
+        $organizations = $organizations
+            ->map(function ($organization) use ($user, $flagsByOrganization) {
                 return [
                     'id' => $organization->id,
                     'name' => $organization->name,
@@ -36,6 +46,7 @@ class OrganizationController extends Controller
                     'roles' => $user->roleNamesForOrganization($organization->id),
                     'permissions' => $user->permissionNamesForProject($organization->id),
                     'project_permissions' => $this->accessControlService->projectScopedPermissionNames($user, $organization->id),
+                    'feature_flags' => $flagsByOrganization[$organization->id] ?? $this->featureFlagService->defaultMap(),
                 ];
             })
             ->values();

@@ -52,7 +52,7 @@ class DrawingController extends Controller
             $projectIds = $this->accessControlService->projectIdsWithPermission($user, $organization->id, 'drawings.view');
 
             if ($projectIds === []) {
-                abort(403);
+                $this->denyWithPermissions($request, ['drawings.view'], 'You do not have permission to view drawings.');
             }
 
             $query->whereIn('project_id', $projectIds);
@@ -88,7 +88,7 @@ class DrawingController extends Controller
         $this->authorize('create', Drawing::class);
 
         if (! $this->accessControlService->allows($request->user(), $project->organization_id, $project->id, 'drawings.manage')) {
-            abort(403);
+            $this->denyWithPermissions($request, ['drawings.manage'], 'You do not have permission to manage drawings for this project.');
         }
 
         $validated = $request->validate([

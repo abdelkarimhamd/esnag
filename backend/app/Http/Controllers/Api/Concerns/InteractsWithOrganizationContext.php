@@ -27,5 +27,14 @@ trait InteractsWithOrganizationContext
             abort(404);
         }
     }
+
+    /**
+     * @param  array<int, string>  $requiredPermissions
+     */
+    protected function denyWithPermissions(Request $request, array $requiredPermissions, string $message = 'Forbidden'): never
+    {
+        $request->attributes->set('required_permissions', array_values(array_unique(array_map('strval', $requiredPermissions))));
+        abort(403, $message);
+    }
 }
 

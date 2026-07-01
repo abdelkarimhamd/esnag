@@ -1,25 +1,19 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { useFocusEffect } from '@react-navigation/native'
 import { useCallback, useMemo, useState } from 'react'
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
-import {
-  findOfflineLocationByBarcode,
-  listOfflineFloorLocations,
-  listOfflineFloors,
-  listOfflineFloorZones,
-} from '../db/store'
-import type {
-  OfflineFloorLocationRow,
-  OfflineFloorMapRow,
-  OfflineFloorZoneRow,
-} from '../types'
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { findOfflineLocationByBarcode, listOfflineFloorLocations, listOfflineFloors, listOfflineFloorZones } from '../db/store'
+import type { OfflineFloorLocationRow, OfflineFloorMapRow, OfflineFloorZoneRow } from '../types'
 import type { SnagsStackParamList } from '../navigation/types'
+import { useAppTheme } from '../theme/ThemeProvider'
+import { Button, Card, EmptyState, ListItem, ScreenContainer, SectionHeader, StatusPill, TextField } from '../ui'
 
 type Props = NativeStackScreenProps<SnagsStackParamList, 'FloorMap'>
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
 
 export const FloorMapScreen = ({ navigation }: Props) => {
+  const theme = useAppTheme()
   const [projectFilter, setProjectFilter] = useState('')
   const [barcode, setBarcode] = useState('')
   const [floors, setFloors] = useState<OfflineFloorMapRow[]>([])
@@ -59,19 +53,10 @@ export const FloorMapScreen = ({ navigation }: Props) => {
     }, [loadFloors]),
   )
 
-  const selectedFloor = useMemo(
-    () => floors.find((floor) => floor.id === selectedFloorId) ?? null,
-    [floors, selectedFloorId],
-  )
-
+  const selectedFloor = useMemo(() => floors.find((floor) => floor.id === selectedFloorId) ?? null, [floors, selectedFloorId])
   const selectedLocation = useMemo(
     () => locations.find((location) => location.id === selectedLocationId) ?? null,
     [locations, selectedLocationId],
-  )
-
-  const selectedZone = useMemo(
-    () => zones.find((zone) => zone.id === selectedZoneId) ?? null,
-    [zones, selectedZoneId],
   )
 
   const selectFloor = (floorId: number) => {
@@ -123,6 +108,7 @@ export const FloorMapScreen = ({ navigation }: Props) => {
 
     const fallbackX = 0.5
     const fallbackY = 0.5
+    const selectedZone = zones.find((zone) => zone.id === selectedZoneId) ?? null
     const pinX = selectedZone ? clamp01((selectedZone.x_min + selectedZone.x_max) / 2) : fallbackX
     const pinY = selectedZone ? clamp01((selectedZone.y_min + selectedZone.y_max) / 2) : fallbackY
 
@@ -139,72 +125,62 @@ export const FloorMapScreen = ({ navigation }: Props) => {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Offline Floor Map</Text>
-      <Text style={styles.subtitle}>Navigate floors and zones instantly from local cache, even when drawings are unavailable.</Text>
+    <ScreenContainer scroll>
+      <SectionHeader title="Offline Floor Map" subtitle="Navigate floors and zones instantly from local cache." />
 
-      <View style={styles.card}>
-        <Text style={styles.label}>Project Filter (optional project id)</Text>
+      <Card elevated>
+        <TextField
+          label="Project filter (optional ID)"
+          placeholder="Project ID"
+          keyboardType="numeric"
+          value={projectFilter}
+          onChangeText={setProjectFilter}
+        />
         <View style={styles.row}>
-          <TextInput
-            style={[styles.input, styles.flexInput]}
-            placeholder="Project ID"
-            keyboardType="numeric"
-            value={projectFilter}
-            onChangeText={setProjectFilter}
-          />
-          <Pressable style={styles.secondaryButton} onPress={() => loadFloors()}>
-            <Text style={styles.secondaryButtonText}>Apply</Text>
-          </Pressable>
-        </View>
-
-        <Text style={styles.label}>Barcode Quick Open</Text>
-        <View style={styles.row}>
-          <TextInput
-            style={[styles.input, styles.flexInput]}
+          <TextField
+            label="Barcode quick open"
             placeholder="Scan or enter barcode"
             value={barcode}
             onChangeText={setBarcode}
             autoCapitalize="characters"
+            style={styles.flex}
           />
-          <Pressable style={styles.secondaryButton} onPress={resolveBarcode}>
-            <Text style={styles.secondaryButtonText}>Open</Text>
-          </Pressable>
+          <View style={styles.barcodeAction}>
+            <Button label="Open" variant="secondary" onPress={resolveBarcode} />
+          </View>
         </View>
-      </View>
+        <Button label="Apply filter" onPress={() => loadFloors()} />
+      </Card>
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Floors ({floors.length})</Text>
-        <View style={styles.floorWrap}>
-          {floors.map((floor) => (
-            <Pressable
-              key={floor.id}
-              style={[styles.floorChip, selectedFloorId === floor.id && styles.floorChipActive]}
-              onPress={() => selectFloor(floor.id)}
-            >
-              <Text style={[styles.floorChipText, selectedFloorId === floor.id && styles.floorChipTextActive]}>
-                {floor.building_code}-{floor.code}
-              </Text>
-              <Text style={styles.floorMeta}>
-                {floor.open_snags} open / {floor.total_snags} total
-              </Text>
-            </Pressable>
-          ))}
-          {floors.length === 0 ? <Text style={styles.empty}>No offline floor cache available yet. Run sync first.</Text> : null}
-        </View>
-      </View>
+      <Card elevated>
+        <SectionHeader title={`Floors (${floors.length})`} />
+        {floors.length === 0 ? (
+          <EmptyState title="No floor cache" message="Run sync first to cache floors and zones." />
+        ) : (
+          <View style={{ gap: 8 }}>
+            {floors.map((floor) => (
+              <ListItem
+                key={floor.id}
+                selected={selectedFloorId === floor.id}
+                onPress={() => selectFloor(floor.id)}
+                title={`${floor.building_code}-${floor.code}`}
+                subtitle={`${floor.open_snags} open / ${floor.total_snags} total`}
+              />
+            ))}
+          </View>
+        )}
+      </Card>
 
       {selectedFloor ? (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>
-            {selectedFloor.building_name} - {selectedFloor.name}
-          </Text>
-          <Text style={styles.floorMeta}>
-            {selectedFloor.location_count} locations | {selectedFloor.zone_count} zones | {selectedFloor.open_snags} open snags
-          </Text>
+        <Card elevated>
+          <SectionHeader
+            title={`${selectedFloor.building_name} - ${selectedFloor.name}`}
+            subtitle={`${selectedFloor.location_count} locations • ${selectedFloor.zone_count} zones`}
+            right={<StatusPill label={`${selectedFloor.open_snags} open`} tone="warning" />}
+          />
 
           {zones.length > 0 ? (
-            <View style={styles.mapCanvas}>
+            <View style={[styles.mapCanvas, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated }]}>
               {zones.map((zone) => (
                 <Pressable
                   key={zone.id}
@@ -215,226 +191,81 @@ export const FloorMapScreen = ({ navigation }: Props) => {
                       top: `${clamp01(zone.y_min) * 100}%`,
                       width: `${Math.max(2, clamp01(zone.x_max - zone.x_min) * 100)}%`,
                       height: `${Math.max(2, clamp01(zone.y_max - zone.y_min) * 100)}%`,
+                      borderColor: selectedZoneId === zone.id ? theme.colors.success : theme.colors.info,
+                      backgroundColor: selectedZoneId === zone.id ? 'rgba(51,181,122,0.28)' : 'rgba(122,170,241,0.26)',
                     },
-                    selectedZoneId === zone.id && styles.zoneActive,
                   ]}
                   onPress={() => {
                     setSelectedZoneId(zone.id)
                     setSelectedLocationId(zone.location_id)
                   }}
                 >
-                  <Text numberOfLines={1} style={styles.zoneLabel}>
+                  <Text numberOfLines={1} style={[styles.zoneLabel, { color: theme.colors.text }]}>
                     {zone.location_code}
                   </Text>
                 </Pressable>
               ))}
             </View>
           ) : (
-            <Text style={styles.empty}>No zone grid cached for this floor yet. Using location list fallback below.</Text>
+            <EmptyState title="No zone grid" message="No cached zones for this floor yet. Use location list below." />
           )}
 
-          <View style={styles.locationList}>
+          <View style={{ gap: 8 }}>
             {locations.map((location) => (
-              <Pressable
+              <ListItem
                 key={location.id}
-                style={[styles.locationRow, selectedLocationId === location.id && styles.locationRowActive]}
+                selected={selectedLocationId === location.id}
                 onPress={() => {
                   setSelectedLocationId(location.id)
                   setSelectedZoneId(null)
                 }}
-              >
-                <Text style={styles.locationName}>{location.code} - {location.name}</Text>
-                <Text style={styles.locationMeta}>
-                  {location.open_snags} open / {location.total_snags} total
-                  {location.barcode ? ` | ${location.barcode}` : ''}
-                </Text>
-              </Pressable>
+                title={`${location.code} - ${location.name}`}
+                subtitle={`${location.open_snags} open / ${location.total_snags} total${location.barcode ? ` • ${location.barcode}` : ''}`}
+              />
             ))}
-            {locations.length === 0 ? <Text style={styles.empty}>No locations on this floor.</Text> : null}
+            {locations.length === 0 ? <EmptyState title="No locations" message="No locations available on this floor." /> : null}
           </View>
 
-          <View style={styles.actions}>
-            <Pressable
-              style={[styles.primaryButton, !(selectedFloor && selectedLocation) && styles.disabledButton]}
-              disabled={!(selectedFloor && selectedLocation)}
-              onPress={openFilteredSnags}
-            >
-              <Text style={styles.primaryButtonText}>View Location Snags</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.secondaryButtonWide, !(selectedFloor && selectedLocation) && styles.disabledButton]}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            <Button label="View Location Snags" disabled={!(selectedFloor && selectedLocation)} onPress={openFilteredSnags} />
+            <Button
+              label="Create Snag At Location"
+              variant="secondary"
               disabled={!(selectedFloor && selectedLocation)}
               onPress={openCreateSnag}
-            >
-              <Text style={styles.secondaryButtonText}>Create Snag At Location</Text>
-            </Pressable>
+            />
           </View>
-        </View>
+        </Card>
       ) : null}
-    </ScrollView>
+    </ScreenContainer>
   )
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 16,
-    gap: 10,
-    backgroundColor: '#F8FAFC',
-    paddingBottom: 30,
-  },
-  title: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  subtitle: {
-    color: '#475569',
-  },
-  card: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: '#FFFFFF',
-    gap: 8,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  label: {
-    color: '#334155',
-    fontWeight: '700',
-    marginTop: 2,
-  },
   row: {
     flexDirection: 'row',
     gap: 8,
   },
-  input: {
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
-  },
-  flexInput: {
+  flex: {
     flex: 1,
   },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: '#0EA5E9',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F0F9FF',
-  },
-  secondaryButtonWide: {
-    borderWidth: 1,
-    borderColor: '#0EA5E9',
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: 'center',
-    backgroundColor: '#F0F9FF',
-  },
-  secondaryButtonText: {
-    color: '#0369A1',
-    fontWeight: '700',
-  },
-  floorWrap: {
-    gap: 8,
-  },
-  floorChip: {
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 10,
-    padding: 10,
-  },
-  floorChipActive: {
-    borderColor: '#0284C7',
-    backgroundColor: '#E0F2FE',
-  },
-  floorChipText: {
-    color: '#334155',
-    fontWeight: '700',
-  },
-  floorChipTextActive: {
-    color: '#0369A1',
-  },
-  floorMeta: {
-    color: '#64748B',
-    fontSize: 12,
+  barcodeAction: {
+    justifyContent: 'flex-end',
   },
   mapCanvas: {
-    marginTop: 4,
     height: 320,
     borderRadius: 12,
-    backgroundColor: '#F8FAFC',
     borderWidth: 1,
-    borderColor: '#CBD5E1',
     position: 'relative',
     overflow: 'hidden',
   },
   zone: {
     position: 'absolute',
     borderWidth: 1,
-    borderColor: '#06B6D4',
-    backgroundColor: 'rgba(34, 211, 238, 0.22)',
     padding: 2,
-  },
-  zoneActive: {
-    borderColor: '#0F766E',
-    backgroundColor: 'rgba(45, 212, 191, 0.35)',
   },
   zoneLabel: {
     fontSize: 10,
-    color: '#0F172A',
     fontWeight: '700',
-  },
-  locationList: {
-    gap: 6,
-    marginTop: 4,
-  },
-  locationRow: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 10,
-    padding: 8,
-  },
-  locationRowActive: {
-    borderColor: '#0284C7',
-    backgroundColor: '#E0F2FE',
-  },
-  locationName: {
-    color: '#0F172A',
-    fontWeight: '700',
-  },
-  locationMeta: {
-    color: '#64748B',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  actions: {
-    gap: 8,
-    marginTop: 6,
-  },
-  primaryButton: {
-    borderRadius: 10,
-    backgroundColor: '#0F766E',
-    alignItems: 'center',
-    paddingVertical: 11,
-  },
-  primaryButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  disabledButton: {
-    opacity: 0.55,
-  },
-  empty: {
-    color: '#64748B',
   },
 })

@@ -533,6 +533,27 @@ export const listPendingAttachments = (limit = 20): LocalAttachmentRecord[] => {
   )
 }
 
+/**
+ * Reset attachments orphaned in the 'uploading' state back to 'failed' so they are
+ * re-selected by listPendingAttachments. A row only stays in 'uploading' if the
+ * process was killed (OS kill, crash, RN reload) between markAttachmentUploading and
+ * the upload resolving — a normal upload error already transitions it to 'failed'.
+ * Safe to run at the start of a sync because the syncInProgress guard prevents
+ * concurrent syncs, so any 'uploading' row is necessarily from a dead prior run.
+ */
+export const reclaimStaleUploadingAttachments = () => {
+  db.runSync(
+    `
+      UPDATE attachments_local
+      SET upload_state = 'failed',
+          next_retry_at = NULL,
+          updated_at = ?
+      WHERE upload_state = 'uploading'
+    `,
+    nowIso(),
+  )
+}
+
 export const markAttachmentUploading = (localId: number) => {
   db.runSync(
     `

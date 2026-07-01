@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Services\AccessControlService;
+use App\Services\FeatureFlagService;
 use App\Services\MfaService;
 use App\Services\MobileDeviceSecurityService;
 use App\Services\OrganizationSecurityService;
@@ -17,6 +18,7 @@ class AuthController extends Controller
 {
     public function __construct(
         private readonly AccessControlService $accessControlService,
+        private readonly FeatureFlagService $featureFlagService,
         private readonly MfaService $mfaService,
         private readonly OrganizationSecurityService $organizationSecurityService,
         private readonly MobileDeviceSecurityService $mobileDeviceSecurityService,
@@ -249,6 +251,7 @@ class AuthController extends Controller
                     'roles' => $user->roleNamesForOrganization($organization->id),
                     'permissions' => $user->permissionNamesForProject($organization->id),
                     'project_permissions' => $this->accessControlService->projectScopedPermissionNames($user, $organization->id),
+                    'feature_flags' => $this->featureFlagService->resolvedFlags($organization->id),
                 ];
             })
             ->values();

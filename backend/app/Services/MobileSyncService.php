@@ -3,13 +3,16 @@
 namespace App\Services;
 
 use App\Enums\SnagStatus;
+use App\Models\MobileSyncProcessedOperation;
 use App\Models\Organization;
 use App\Models\RootCauseCategory;
 use App\Models\Snag;
 use App\Models\SnagComment;
 use App\Models\SnagStatusHistory;
 use App\Models\User;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -30,27 +33,55 @@ class MobileSyncService
         $results = [];
 
         foreach ($operations as $index => $operation) {
-            $opId = (string) ($operation['op_id'] ?? Str::uuid()->toString());
+            $hasClientOpId = isset($operation['op_id'])
+                && is_scalar($operation['op_id'])
+                && trim((string) $operation['op_id']) !== '';
+            $opId = $hasClientOpId ? (string) $operation['op_id'] : Str::uuid()->toString();
             $type = (string) ($operation['type'] ?? '');
             $payload = is_array($operation['payload'] ?? null) ? $operation['payload'] : [];
             $clientUpdatedAt = $this->parseClientTimestamp($operation['client_updated_at'] ?? null);
 
-            try {
-                $resultPayload = match ($type) {
-                    'snag.create' => $this->handleSnagCreate($organization, $actor, $payload),
-                    'snag.update' => $this->handleSnagUpdate($organization, $actor, $payload, $clientUpdatedAt),
-                    'snag.transition' => $this->handleSnagTransition($organization, $actor, $payload),
-                    'snag.comment.create' => $this->handleSnagCommentCreate($organization, $actor, $payload),
-                    default => throw ValidationException::withMessages([
-                        'type' => ['Unsupported operation type.'],
-                    ]),
-                };
+            // Idempotency: if this client op_id already committed on a prior request
+            // whose response was lost, replay the original result instead of re-running
+            // the handler (which would otherwise produce a phantom conflict on
+            // snag.update or a false rejection on snag.transition).
+            if ($hasClientOpId && ($cached = $this->findProcessedOperation($organization->id, $opId)) !== null) {
+                $results[] = array_merge(
+                    ['op_id' => $opId, 'status' => (string) $cached->status],
+                    is_array($cached->result) ? $cached->result : [],
+                );
 
-                $results[] = [
-                    'op_id' => $opId,
-                    'status' => 'applied',
-                    'result' => $resultPayload,
-                ];
+                continue;
+            }
+
+            try {
+                $results[] = DB::transaction(function () use ($type, $organization, $actor, $payload, $clientUpdatedAt, $opId, $hasClientOpId) {
+                    $resultPayload = match ($type) {
+                        'snag.create' => $this->handleSnagCreate($organization, $actor, $payload),
+                        'snag.update' => $this->handleSnagUpdate($organization, $actor, $payload, $clientUpdatedAt),
+                        'snag.transition' => $this->handleSnagTransition($organization, $actor, $payload),
+                        'snag.comment.create' => $this->handleSnagCommentCreate($organization, $actor, $payload),
+                        default => throw ValidationException::withMessages([
+                            'type' => ['Unsupported operation type.'],
+                        ]),
+                    };
+
+                    $entry = [
+                        'op_id' => $opId,
+                        'status' => 'applied',
+                        'result' => $resultPayload,
+                    ];
+
+                    // Remember only genuinely-applied (non-conflict) operations, atomically
+                    // with the data write. Conflicts wrote nothing (so a later real apply can
+                    // still be remembered) and rejected/failed ops are intentionally retryable.
+                    $isConflict = is_array($resultPayload) && ($resultPayload['conflict'] ?? false) === true;
+                    if ($hasClientOpId && ! $isConflict) {
+                        $this->rememberProcessedOperation($organization->id, $opId, $entry);
+                    }
+
+                    return $entry;
+                });
             } catch (ValidationException $exception) {
                 $results[] = [
                     'op_id' => $opId,
@@ -386,6 +417,29 @@ class MobileSyncService
             'comment_id' => $comment->id,
             'created_at' => optional($comment->created_at)->toISOString(),
         ];
+    }
+
+    private function findProcessedOperation(int $organizationId, string $opId): ?MobileSyncProcessedOperation
+    {
+        return MobileSyncProcessedOperation::query()
+            ->where('organization_id', $organizationId)
+            ->where('op_id', $opId)
+            ->first();
+    }
+
+    /**
+     * @param  array<string, mixed>  $entry
+     */
+    private function rememberProcessedOperation(int $organizationId, string $opId, array $entry): void
+    {
+        MobileSyncProcessedOperation::query()->updateOrCreate(
+            ['organization_id' => $organizationId, 'op_id' => $opId],
+            [
+                'status' => $entry['status'],
+                'result' => Arr::except($entry, ['op_id', 'status']),
+                'processed_at' => Carbon::now(),
+            ],
+        );
     }
 
     private function parseClientTimestamp(mixed $value): ?Carbon

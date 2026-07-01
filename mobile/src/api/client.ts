@@ -18,20 +18,107 @@ interface RequestOptions {
   headers?: Record<string, string>
 }
 
+export interface NormalizedMobileApiError {
+  message: string
+  fieldErrors: Record<string, string[]>
+  requestId: string | null
+  status: number | null
+  code: string | null
+  hint: string | null
+  action: string | null
+}
+
 export class ApiError extends Error {
   status: number
   details: unknown
+  normalized: NormalizedMobileApiError
 
-  constructor(message: string, status: number, details: unknown) {
+  constructor(message: string, status: number, details: unknown, normalized: NormalizedMobileApiError) {
     super(message)
     this.status = status
     this.details = details
+    this.normalized = normalized
+  }
+}
+
+const createRequestId = (): string => {
+  try {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return crypto.randomUUID()
+    }
+  } catch {
+    // Fall through to timestamp-random fallback.
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+const normalizeApiErrorPayload = (
+  payload: unknown,
+  status: number,
+  headerRequestId?: string | null,
+): NormalizedMobileApiError => {
+  const body = typeof payload === 'object' && payload ? (payload as Record<string, unknown>) : {}
+  const fieldErrors =
+    body.errors && typeof body.errors === 'object'
+      ? (body.errors as Record<string, string[]>)
+      : {}
+  const firstFieldError = Object.values(fieldErrors).flat().find((value) => typeof value === 'string')
+  const requestId =
+    (typeof body.request_id === 'string' && body.request_id) ||
+    (typeof headerRequestId === 'string' && headerRequestId) ||
+    null
+
+  const messageFromBody = typeof body.message === 'string' ? body.message : null
+  const messageBase =
+    (typeof firstFieldError === 'string' && firstFieldError) ||
+    messageFromBody ||
+    `Request failed with ${status}`
+  const message = requestId ? `${messageBase} (Ref: ${requestId})` : messageBase
+
+  return {
+    message,
+    fieldErrors,
+    requestId,
+    status,
+    code: typeof body.code === 'string' ? body.code : null,
+    hint: typeof body.hint === 'string' ? body.hint : null,
+    action: typeof body.action === 'string' ? body.action : null,
+  }
+}
+
+export const normalizeMobileApiError = (error: unknown, fallback = 'Request failed.'): NormalizedMobileApiError => {
+  if (error instanceof ApiError) {
+    return error.normalized
+  }
+
+  if (error instanceof Error) {
+    return {
+      message: error.message || fallback,
+      fieldErrors: {},
+      requestId: null,
+      status: null,
+      code: null,
+      hint: null,
+      action: null,
+    }
+  }
+
+  return {
+    message: fallback,
+    fieldErrors: {},
+    requestId: null,
+    status: null,
+    code: null,
+    hint: null,
+    action: null,
   }
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
+    'X-Request-Id': createRequestId(),
     ...options.headers,
   }
 
@@ -56,8 +143,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   const payload = await response.json().catch(() => null)
   if (!response.ok) {
-    const message = payload?.message ?? payload?.error ?? `Request failed with ${response.status}`
-    throw new ApiError(String(message), response.status, payload)
+    const normalized = normalizeApiErrorPayload(payload, response.status, response.headers.get('X-Request-Id'))
+    throw new ApiError(normalized.message, response.status, payload, normalized)
   }
 
   return payload as T
@@ -133,7 +220,10 @@ export const apiClient = {
     }),
 
   applySync: (token: string, organizationId: number, operations: Array<Record<string, unknown>>) =>
-    request<{ data: SyncApplyResult[]; meta: { server_time: string } }>('/api/mobile/sync/apply', {
+    request<{
+      data: SyncApplyResult[]
+      meta: { server_time: string; retry_recommended_for: string[] }
+    }>('/api/mobile/sync/apply', {
       token,
       organizationId,
       method: 'POST',

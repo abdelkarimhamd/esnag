@@ -216,6 +216,37 @@ class OpsAdminReliabilityTest extends TestCase
             'occurred_at' => Carbon::now()->subHours(2),
         ]);
 
+        // API latency samples now cover ALL api requests (not just slow ones), so
+        // request_error_rate / p95_api_latency_ms are computed over these and are no
+        // longer conflated with the mobile-sync error rate. 8 samples, 1 errored (>=400)
+        // => request_error_rate 12.5; sorted durations p95 (index 7) => 900.
+        foreach ([
+            ['duration_ms' => 50, 'status_code' => 200],
+            ['duration_ms' => 60, 'status_code' => 200],
+            ['duration_ms' => 70, 'status_code' => 200],
+            ['duration_ms' => 80, 'status_code' => 204],
+            ['duration_ms' => 90, 'status_code' => 200],
+            ['duration_ms' => 100, 'status_code' => 200],
+            ['duration_ms' => 150, 'status_code' => 200],
+            ['duration_ms' => 900, 'status_code' => 500],
+        ] as $sample) {
+            OpsHealthEvent::query()->create([
+                'organization_id' => $organization->id,
+                'event_type' => 'api_latency_sample',
+                'severity' => $sample['status_code'] >= 500 ? 'error' : 'info',
+                'source' => 'api',
+                'message' => 'API latency sample for api/projects',
+                'context' => [
+                    'duration_ms' => $sample['duration_ms'],
+                    'status_code' => $sample['status_code'],
+                    'path' => 'api/projects',
+                    'request_id' => null,
+                    'threshold_ms' => 800,
+                ],
+                'occurred_at' => Carbon::now()->subHour(),
+            ]);
+        }
+
         Sanctum::actingAs($admin);
 
         $this->withHeader('X-Organization-Id', (string) $organization->id)
@@ -223,9 +254,15 @@ class OpsAdminReliabilityTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.sync.total_operations', 3)
             ->assertJsonPath('data.sync.error_operations', 1)
+            ->assertJsonPath('data.sync.retry_rate_percent', 0)
+            ->assertJsonPath('data.request_error_rate', 12.5)
+            ->assertJsonPath('data.p95_api_latency_ms', 900)
+            ->assertJsonPath('data.sync_retry_rate', 0)
+            ->assertJsonPath('data.websocket_delivery_failures_last_24h', 0)
             ->assertJsonPath('data.storage_failures.ops_events_last_24h', 1)
             ->assertJsonStructure([
                 'data' => [
+                    'p95_api_latency_ms',
                     'queue_depth' => [
                         'framework_jobs',
                         'framework_failed_jobs_last_24h',

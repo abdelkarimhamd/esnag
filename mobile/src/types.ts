@@ -318,4 +318,7 @@ export interface SyncApplyResult {
   result?: Record<string, unknown>
   errors?: Record<string, string[]>
   message?: string
+  retryable?: boolean
+  retry_after_seconds?: number | null
+  conflict_type?: 'stale_update' | 'status_transition_guarded' | null
 }

@@ -42,5 +42,11 @@ export type RootTabParamList = {
   Snags: undefined
   Equipment: undefined
   Conflicts: undefined
+  Notifications: undefined
+  MoreHub: undefined
   Settings: undefined
+}
+
+export type RootDrawerParamList = {
+  MainTabs: undefined
 }

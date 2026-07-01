@@ -1,25 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native'
+import { ActivityIndicator, Alert, Text, View } from 'react-native'
 import { apiClient } from '../api/client'
 import type { SnagsStackParamList } from '../navigation/types'
 import { useAuth } from '../providers/AuthProvider'
 import { enqueueOfflineSnagCreate } from '../sync/operations'
 import { useSync } from '../sync/SyncProvider'
+import { useAppTheme } from '../theme/ThemeProvider'
 import type { DrawingSummary, ProjectSummary } from '../types'
+import { Button, Card, ScreenContainer, SectionHeader, Select, TextField } from '../ui'
 
 type Props = NativeStackScreenProps<SnagsStackParamList, 'SnagCreate'>
 
 export const CreateSnagScreen = ({ navigation, route }: Props) => {
+  const theme = useAppTheme()
   const { token, activeOrganization } = useAuth()
   const { refreshQueueSize } = useSync()
 
@@ -101,6 +95,10 @@ export const CreateSnagScreen = ({ navigation, route }: Props) => {
     () => projects.find((project) => project.id === Number(projectId))?.name ?? 'Not selected',
     [projects, projectId],
   )
+  const selectedDrawingLabel = useMemo(
+    () => drawings.find((drawing) => drawing.id === Number(drawingId))?.title ?? 'Not selected',
+    [drawings, drawingId],
+  )
 
   const submit = async () => {
     const parsedProjectId = Number(projectId)
@@ -109,12 +107,12 @@ export const CreateSnagScreen = ({ navigation, route }: Props) => {
     const parsedPinY = Number(pinY)
 
     if (!Number.isFinite(parsedProjectId) || parsedProjectId <= 0) {
-      Alert.alert('Missing project', 'Select a project id before creating a snag.')
+      Alert.alert('Missing project', 'Select a project before creating a snag.')
       return
     }
 
     if (!Number.isFinite(parsedDrawingId) || parsedDrawingId <= 0) {
-      Alert.alert('Missing drawing', 'Select a drawing id before creating a snag.')
+      Alert.alert('Missing drawing', 'Select a drawing before creating a snag.')
       return
     }
 
@@ -146,155 +144,94 @@ export const CreateSnagScreen = ({ navigation, route }: Props) => {
 
   if (loading) {
     return (
-      <View style={styles.loading}>
-        <ActivityIndicator />
-      </View>
+      <ScreenContainer>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator />
+        </View>
+      </ScreenContainer>
     )
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.heading}>Create Offline Snag</Text>
-      <Text style={styles.caption}>Queue the operation now. It syncs automatically when online.</Text>
-
-      <Text style={styles.label}>Project ({selectedProjectLabel})</Text>
-      <TextInput placeholder="Project ID" keyboardType="numeric" style={styles.input} value={projectId} onChangeText={setProjectId} />
-
-      <Text style={styles.label}>Drawing</Text>
-      <TextInput placeholder="Drawing ID" keyboardType="numeric" style={styles.input} value={drawingId} onChangeText={setDrawingId} />
-      {drawings.length > 0 ? (
-        <Text style={styles.helpText}>
-          Drawings for project: {drawings.map((drawing) => `${drawing.id}:${drawing.code}`).slice(0, 6).join(' | ')}
-        </Text>
-      ) : null}
-
-      <Text style={styles.label}>Title</Text>
-      <TextInput placeholder="Snag title" style={styles.input} value={title} onChangeText={setTitle} />
-
-      <Text style={styles.label}>Description</Text>
-      <TextInput
-        placeholder="Description"
-        style={[styles.input, styles.multiline]}
-        multiline
-        numberOfLines={4}
-        value={description}
-        onChangeText={setDescription}
+    <ScreenContainer scroll>
+      <SectionHeader
+        title="Create Offline Snag"
+        subtitle="Queue now and sync automatically when the device reconnects."
       />
 
-      <Text style={styles.label}>Priority</Text>
-      <View style={styles.priorityRow}>
-        {(['low', 'medium', 'high', 'critical'] as const).map((value) => (
-          <Pressable key={value} style={[styles.priorityChip, priority === value && styles.priorityChipActive]} onPress={() => setPriority(value)}>
-            <Text style={[styles.priorityText, priority === value && styles.priorityTextActive]}>{value}</Text>
-          </Pressable>
-        ))}
-      </View>
+      <Card elevated>
+        <Select
+          label={`Project (${selectedProjectLabel})`}
+          value={projectId || null}
+          onChange={(value) => {
+            setProjectId(String(value))
+            setDrawingId('')
+          }}
+          options={projects.map((project) => ({
+            value: String(project.id),
+            label: project.code,
+            helper: project.name,
+          }))}
+        />
 
-      <Text style={styles.label}>Pin X (0..1)</Text>
-      <TextInput placeholder="0.50" style={styles.input} keyboardType="decimal-pad" value={pinX} onChangeText={setPinX} />
+        <Select
+          label={`Drawing (${selectedDrawingLabel})`}
+          value={drawingId || null}
+          onChange={(value) => setDrawingId(String(value))}
+          options={drawings.map((drawing) => ({
+            value: String(drawing.id),
+            label: drawing.code,
+            helper: drawing.title,
+          }))}
+        />
+        <Text style={{ fontSize: 12, color: theme.colors.textMuted }}>
+          {drawings.length > 0 ? 'Tap a drawing to select it.' : 'Select a project to load drawings.'}
+        </Text>
 
-      <Text style={styles.label}>Pin Y (0..1)</Text>
-      <TextInput placeholder="0.50" style={styles.input} keyboardType="decimal-pad" value={pinY} onChangeText={setPinY} />
+        <TextField placeholder="Snag title" label="Title" value={title} onChangeText={setTitle} />
+        <TextField
+          placeholder="Description"
+          label="Description"
+          value={description}
+          onChangeText={setDescription}
+          multiline
+          numberOfLines={4}
+          style={{ minHeight: 96, textAlignVertical: 'top' }}
+        />
 
-      <Text style={styles.label}>Building / Floor / Location (optional IDs)</Text>
-      <View style={styles.inlineInputs}>
-        <TextInput placeholder="Building" keyboardType="numeric" style={[styles.input, styles.inlineInput]} value={buildingId} onChangeText={setBuildingId} />
-        <TextInput placeholder="Floor" keyboardType="numeric" style={[styles.input, styles.inlineInput]} value={floorId} onChangeText={setFloorId} />
-        <TextInput placeholder="Location" keyboardType="numeric" style={[styles.input, styles.inlineInput]} value={locationId} onChangeText={setLocationId} />
-      </View>
+        <Select
+          label="Priority"
+          horizontal={false}
+          value={priority}
+          onChange={(value) => setPriority(value as typeof priority)}
+          options={(['low', 'medium', 'high', 'critical'] as const).map((value) => ({
+            value,
+            label: value,
+          }))}
+        />
 
-      <Pressable disabled={saving || !title.trim()} style={[styles.submit, (!title.trim() || saving) && styles.submitDisabled]} onPress={() => void submit()}>
-        <Text style={styles.submitText}>{saving ? 'Queueing...' : 'Queue Snag'}</Text>
-      </Pressable>
-    </ScrollView>
+        <TextField
+          placeholder="0.50"
+          label="Pin X (0..1)"
+          keyboardType="decimal-pad"
+          value={pinX}
+          onChangeText={setPinX}
+        />
+        <TextField
+          placeholder="0.50"
+          label="Pin Y (0..1)"
+          keyboardType="decimal-pad"
+          value={pinY}
+          onChangeText={setPinY}
+        />
+        <Button
+          fullWidth
+          label={saving ? 'Queueing...' : 'Queue Snag'}
+          loading={saving}
+          disabled={!title.trim()}
+          onPress={() => void submit()}
+        />
+      </Card>
+    </ScreenContainer>
   )
 }
-
-const styles = StyleSheet.create({
-  loading: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  container: {
-    padding: 16,
-    backgroundColor: '#F8FAFC',
-    gap: 8,
-  },
-  heading: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  caption: {
-    color: '#475569',
-    marginBottom: 6,
-  },
-  label: {
-    fontWeight: '700',
-    color: '#334155',
-    marginTop: 5,
-  },
-  input: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#CBD5E1',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  multiline: {
-    minHeight: 90,
-    textAlignVertical: 'top',
-  },
-  helpText: {
-    color: '#64748B',
-    fontSize: 12,
-  },
-  priorityRow: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  priorityChip: {
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#FFFFFF',
-  },
-  priorityChipActive: {
-    borderColor: '#0284C7',
-    backgroundColor: '#E0F2FE',
-  },
-  priorityText: {
-    color: '#475569',
-    textTransform: 'capitalize',
-  },
-  priorityTextActive: {
-    color: '#0369A1',
-    fontWeight: '700',
-  },
-  inlineInputs: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  inlineInput: {
-    flex: 1,
-  },
-  submit: {
-    marginTop: 12,
-    backgroundColor: '#0F766E',
-    borderRadius: 10,
-    paddingVertical: 13,
-    alignItems: 'center',
-  },
-  submitDisabled: {
-    opacity: 0.6,
-  },
-  submitText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-})

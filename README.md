@@ -114,6 +114,22 @@ cmd /c "npm run start"
 - IP allowlist checks run on organization-scoped API routes when `enforce_ip_allowlist=true`.
 - Antivirus default is local EICAR heuristic (`SECURITY_ANTIVIRUS_DRIVER=eicar`). Switch to `clamav` to call `SECURITY_CLAMAV_BINARY`.
 
+## Faster Troubleshooting
+- Every API request now carries a request correlation ID:
+  - Client sends `X-Request-Id`.
+  - API responses include `X-Request-Id`.
+  - API error JSON includes `request_id`.
+- Frontend error messages append a support reference when available:
+  - Example: `Forbidden action (Ref: 7f5c...)`.
+- Backend request logs:
+  - `backend/storage/logs/api-YYYY-MM-DD.log` for API warnings/errors.
+  - `backend/storage/logs/laravel.log` for general app logs.
+- Logging controls in `backend/.env`:
+  - `API_REQUEST_LOG_ENABLED=true`
+  - `API_REQUEST_LOG_INCLUDE_SUCCESS=false`
+  - `API_SLOW_REQUEST_THRESHOLD_MS=800`
+  - `LOG_API_LEVEL=info`
+
 ## Demo Users
 Password for all demo users: `password`
 
@@ -161,6 +177,28 @@ cmd /c "npm run build"
 cd ..\mobile
 cmd /c "npm run typecheck"
 ```
+
+## Release Stabilization Gates
+- Run full release gates locally before merge:
+```powershell
+.\scripts\release-quality-gates.ps1
+```
+- Linux/macOS equivalent:
+```bash
+./scripts/release-quality-gates.sh
+```
+- CI required checks (recommended branch protection):
+  - `Backend Tests / php-tests`
+  - `Web Build / build`
+  - `Mobile Checks / typecheck`
+- Fail-fast checks included in CI:
+  - API contract and RBAC tests (backend)
+  - Role visibility and API error adapter tests (web)
+- Release docs:
+  - `docs/release/release-checklist.md`
+  - `docs/release/rollback-runbook.md`
+  - `docs/release/role-sidebar-matrix.md`
+  - `docs/release/baseline-2026-02-18.md`
 
 ## Ops Console Notes
 - Required permissions are one or more of:

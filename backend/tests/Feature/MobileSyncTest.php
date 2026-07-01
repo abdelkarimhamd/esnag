@@ -53,6 +53,9 @@ class MobileSyncTest extends TestCase
         $staleResponse->assertOk()
             ->assertJsonPath('data.0.op_id', 'stale-update')
             ->assertJsonPath('data.0.status', 'applied')
+            ->assertJsonPath('data.0.retryable', true)
+            ->assertJsonPath('data.0.retry_after_seconds', 10)
+            ->assertJsonPath('data.0.conflict_type', 'stale_update')
             ->assertJsonPath('data.0.result.conflict', true)
             ->assertJsonPath('data.0.result.policy', 'last_write_wins')
             ->assertJsonPath('data.0.result.resolution_options.0', 'use_server')
@@ -119,6 +122,8 @@ class MobileSyncTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('data.0.op_id', 'invalid-transition')
             ->assertJsonPath('data.0.status', 'rejected')
+            ->assertJsonPath('data.0.retryable', false)
+            ->assertJsonPath('data.0.conflict_type', 'status_transition_guarded')
             ->assertJsonPath('data.0.errors.to_status.0', 'Invalid status transition for the current snag state.');
 
         $this->assertDatabaseHas('snags', [

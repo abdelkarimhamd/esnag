@@ -22,8 +22,10 @@ use App\Models\StakeholderTeam;
 use App\Models\User;
 use App\Notifications\SnagAssignedNotification;
 use App\Services\AccessControlService;
+use App\Services\CloseoutService;
 use App\Services\SnagCollaborationService;
 use App\Services\WorkflowAutomationService;
+use App\Support\SnagWorkflow;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -35,6 +37,7 @@ class SnagController extends Controller
 
     public function __construct(
         private readonly AccessControlService $accessControlService,
+        private readonly CloseoutService $closeoutService,
         private readonly SnagCollaborationService $snagCollaborationService,
         private readonly WorkflowAutomationService $workflowAutomationService,
     ) {
@@ -285,8 +288,11 @@ class SnagController extends Controller
             'closeoutInstance.items.evidences',
         ]);
 
+        $payload = $snag->toArray();
+        $payload['workflow'] = $this->buildWorkflowMetadata($snag);
+
         return response()->json([
-            'data' => $snag,
+            'data' => $payload,
         ]);
     }
 
@@ -562,7 +568,7 @@ class SnagController extends Controller
         $organization = $this->currentOrganization($request);
 
         if (! $this->accessControlService->allows($request->user(), $organization->id, $projectId, $permission)) {
-            abort(403, $message);
+            $this->denyWithPermissions($request, [$permission], $message);
         }
     }
 
@@ -634,5 +640,63 @@ class SnagController extends Controller
                 'assigned_to' => ['Selected user is not an active member of the assigned company.'],
             ]);
         }
+    }
+
+    /**
+     * @return array{
+     *   current_status:string,
+     *   available_transitions:array<int, string>,
+     *   next_actions:array<int, array{action_key:string,to_status:string,label:string,allowed:bool,reason:?string}>,
+     *   recommended_next_status:?string,
+     *   can_close:bool,
+     *   closeout_completion:int,
+     *   blocked:array<string, string>
+     * }
+     */
+    private function buildWorkflowMetadata(Snag $snag): array
+    {
+        $transitions = SnagWorkflow::transitions()[$snag->status] ?? [];
+        $closeoutCompletion = (int) ($snag->closeoutInstance?->completion_percentage ?? 0);
+        $hasCloseTransition = in_array('closed', $transitions, true);
+        // Use the read-only completeness check here: buildWorkflowMetadata is called
+        // from the GET show() path, and canCloseSnag() would issue a COUNT query plus a
+        // save()/fresh() write on every read. isCloseoutCompleteFromLoaded() derives the
+        // same result from the already eager-loaded closeoutInstance.items.evidences.
+        $closeBlocked = $hasCloseTransition && ! $this->closeoutService->isCloseoutCompleteFromLoaded($snag);
+        $blocked = [];
+        if ($closeBlocked) {
+            $blocked['closed'] = 'Closeout must be 100% complete (including required evidence) before closing this snag.';
+        }
+
+        $labels = SnagStatus::labels();
+        $nextActions = collect($transitions)
+            ->map(function (string $status) use ($labels, $closeBlocked): array {
+                $isBlocked = $status === SnagStatus::Closed->value && $closeBlocked;
+
+                return [
+                    'action_key' => 'transition.'.$status,
+                    'to_status' => $status,
+                    'label' => $labels[$status] ?? ucfirst(str_replace('_', ' ', $status)),
+                    'allowed' => ! $isBlocked,
+                    'reason' => $isBlocked
+                        ? 'Closeout must be 100% complete (including required evidence) before closing this snag.'
+                        : null,
+                ];
+            })
+            ->values()
+            ->all();
+
+        $recommended = collect($transitions)
+            ->first(fn (string $status): bool => ! ($status === 'closed' && $closeBlocked));
+
+        return [
+            'current_status' => $snag->status,
+            'available_transitions' => $transitions,
+            'next_actions' => $nextActions,
+            'recommended_next_status' => $recommended ?: null,
+            'can_close' => $snag->status === 'closed' || ($hasCloseTransition && ! $closeBlocked),
+            'closeout_completion' => $closeoutCompletion,
+            'blocked' => $blocked,
+        ];
     }
 }
