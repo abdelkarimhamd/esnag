@@ -50,6 +50,16 @@ export const AuthProvider = ({ children }) => {
         applyPayload(response.data);
         setProjectPermissionCache({});
     }, [applyPayload]);
+    const requestEmailOtp = useCallback(async (email, password) => {
+        await ensureCsrfCookie();
+        await api.post('/api/auth/otp/request', { email, password });
+    }, []);
+    const loginWithEmailOtp = useCallback(async (email, password, code) => {
+        await ensureCsrfCookie();
+        const response = await api.post('/api/auth/otp/verify', { email, password, code });
+        applyPayload(response.data);
+        setProjectPermissionCache({});
+    }, [applyPayload]);
     const logout = useCallback(async () => {
         try {
             await api.post('/api/auth/logout');
@@ -100,6 +110,8 @@ export const AuthProvider = ({ children }) => {
         activeRoleNames,
         permissions,
         login,
+        requestEmailOtp,
+        loginWithEmailOtp,
         logout,
         refresh,
         selectOrganization,
@@ -112,6 +124,8 @@ export const AuthProvider = ({ children }) => {
         activeRoleNames,
         permissions,
         login,
+        requestEmailOtp,
+        loginWithEmailOtp,
         logout,
         refresh,
         selectOrganization,
