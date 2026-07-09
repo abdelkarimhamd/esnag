@@ -116,16 +116,6 @@ const fullMenu: MenuSection[] = [
         badgeKey: 'notifications',
       },
       {
-        id: 'inspection-link',
-        type: 'route',
-        label: 'Inspection Link',
-        subtitle: 'Deep-link destination',
-        icon: 'clipboard-outline',
-        tab: 'Snags',
-        stackScreen: 'InspectionDetail',
-        roles: allRoles,
-      },
-      {
         id: 'handovers',
         type: 'route',
         label: 'Handovers',

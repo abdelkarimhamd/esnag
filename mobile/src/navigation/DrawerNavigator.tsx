@@ -3,6 +3,7 @@ import { createDrawerNavigator, DrawerContentScrollView } from '@react-navigatio
 import React, { useMemo, useState } from 'react'
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useAppTheme } from '../theme/ThemeProvider'
+import { FONTS } from '../theme/tokens'
 import { Badge, Button } from '../ui'
 import {
   getFullMenuByRole,
@@ -96,10 +97,7 @@ const AppDrawerContent = ({ sections, userName, organizationLabel, onLogout, nav
     if (item.tab === 'Snags' && item.stackScreen) {
       navigation.navigate('MainTabs', {
         screen: 'Snags',
-        params: {
-          screen: item.stackScreen,
-          params: item.stackScreen === 'InspectionDetail' ? { inspectionId: undefined } : undefined,
-        },
+        params: { screen: item.stackScreen, params: undefined },
       })
       navigation.closeDrawer()
       return
@@ -183,7 +181,7 @@ const styles = StyleSheet.create({
   },
   name: {
     fontSize: 17,
-    fontWeight: '800',
+    fontFamily: FONTS.sansBold,
   },
   org: {
     fontSize: 12,
@@ -205,7 +203,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: FONTS.sansSemiBold,
     textTransform: 'uppercase',
     letterSpacing: 0.3,
   },
@@ -230,6 +228,6 @@ const styles = StyleSheet.create({
   },
   itemTitle: {
     fontSize: 14,
-    fontWeight: '700',
+    fontFamily: FONTS.sansSemiBold,
   },
 })
