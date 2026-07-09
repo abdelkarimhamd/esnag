@@ -279,6 +279,18 @@ class Phase1FoundationTest extends TestCase
         ]);
     }
 
+    public function test_role_permission_matrix_is_readable(): void
+    {
+        [$organization, $owner] = $this->bootstrapOrganization('owner');
+        Sanctum::actingAs($owner);
+
+        $this->withHeaders(['X-Organization-Id' => (string) $organization->id])
+            ->getJson('/api/rbac/role-matrix')
+            ->assertOk()
+            ->assertJsonStructure(['data' => ['permissions', 'roles' => [['name', 'permissions']]]])
+            ->assertJsonFragment(['name' => 'contractor_submitter']);
+    }
+
     public function test_single_reassignment_without_a_reason_is_rejected(): void
     {
         [$organization, $owner, $project] = $this->bootstrapOrganization('owner');

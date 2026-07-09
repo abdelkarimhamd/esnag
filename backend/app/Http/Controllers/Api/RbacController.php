@@ -223,6 +223,38 @@ class RbacController extends Controller
         ]);
     }
 
+    /**
+     * The catalog-defined roles↔permissions matrix (BR-FR-040). Read-only: role
+     * permission sets are defined in code (PermissionCatalog), the single source
+     * of truth, so this powers a view/audit grid rather than an editor.
+     */
+    public function roleMatrix(Request $request): JsonResponse
+    {
+        $organization = $this->currentOrganization($request);
+
+        if (! $request->user()->hasPermissionInOrganization($organization->id, 'projects.view')) {
+            abort(403);
+        }
+
+        $allPermissions = PermissionCatalog::all();
+        sort($allPermissions);
+
+        $roles = collect(PermissionCatalog::roleMap())
+            ->map(fn (array $permissions, string $name) => [
+                'name' => $name,
+                'permissions' => array_values(array_unique($permissions)),
+            ])
+            ->values()
+            ->all();
+
+        return response()->json([
+            'data' => [
+                'permissions' => $allPermissions,
+                'roles' => $roles,
+            ],
+        ]);
+    }
+
     public function presets(Request $request): JsonResponse
     {
         $organization = $this->currentOrganization($request);

@@ -109,6 +109,9 @@ export const HandoverRequestsPage = () => {
   const [linkOpen, setLinkOpen] = useState(false);
   const [projectSnags, setProjectSnags] = useState([]);
   const [pickedSnagIds, setPickedSnagIds] = useState([]);
+  const [inspectionLinkOpen, setInspectionLinkOpen] = useState(false);
+  const [projectInspections, setProjectInspections] = useState([]);
+  const [pickedInspectionIds, setPickedInspectionIds] = useState([]);
 
   useEffect(() => {
     void api.get('/api/projects', { params: { per_page: 100 } })
@@ -284,6 +287,31 @@ export const HandoverRequestsPage = () => {
       await loadDetail(detail.id);
     } catch (e) {
       setError(toError(e, 'Unable to link snags.'));
+    }
+  };
+
+  const openLinkInspections = async () => {
+    if (!detail) return;
+    setPickedInspectionIds([]);
+    setInspectionLinkOpen(true);
+    try {
+      const r = await api.get('/api/inspections/submissions', { params: { project_id: detail.project_id, per_page: 100 } });
+      const linkedIds = new Set((detail.inspectionSubmissions ?? detail.inspection_submissions ?? []).map((s) => s.id));
+      setProjectInspections((r.data.data ?? []).filter((s) => !linkedIds.has(s.id)));
+    } catch {
+      setProjectInspections([]);
+    }
+  };
+
+  const attachInspections = async () => {
+    if (!detail || pickedInspectionIds.length === 0) return;
+    try {
+      await api.post(`/api/handovers/requests/${detail.id}/inspections`, { inspection_submission_ids: pickedInspectionIds });
+      setInspectionLinkOpen(false);
+      setNotice('Inspections attached to the handover.');
+      await loadDetail(detail.id);
+    } catch (e) {
+      setError(toError(e, 'Unable to attach inspections.'));
     }
   };
 
@@ -555,6 +583,27 @@ export const HandoverRequestsPage = () => {
                 ))}
               </Box>
 
+              {/* Linked inspections (E2 / attach) */}
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <SectionLabel sx={{ fontSize: 10 }}>INSPECTIONS</SectionLabel>
+                <Box role="button" tabIndex={0} onClick={() => void openLinkInspections()}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void openLinkInspections(); }}
+                  sx={{ px: 1.1, py: 0.4, borderRadius: '8px', border: `1px solid ${BRAND.borderStrong}`, fontSize: 11.5, fontWeight: 600, color: BRAND.navy, cursor: 'pointer' }}>
+                  + Attach
+                </Box>
+              </Box>
+              <Box sx={{ mb: 2 }}>
+                {(detail.inspection_submissions ?? detail.inspectionSubmissions ?? []).length === 0 ? (
+                  <Box sx={{ fontSize: 12, color: BRAND.muted, py: 0.5 }}>No inspections attached to this handover yet.</Box>
+                ) : (detail.inspection_submissions ?? detail.inspectionSubmissions ?? []).map((sub) => (
+                  <Box key={sub.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: '7px 10px', mb: '4px', borderRadius: '9px', background: '#F6F7FA', border: `1px solid ${BRAND.borderHair}` }}>
+                    <Mono sx={{ fontSize: 10.5, color: BRAND.muted, flex: 'none' }}>{sub.reference}</Mono>
+                    <Box sx={{ fontSize: 12, color: BRAND.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Inspection submission</Box>
+                    <Mono sx={{ fontSize: 9.5, color: BRAND.faint, flex: 'none', textTransform: 'uppercase' }}>{String(sub.status).replace(/_/g, ' ')}</Mono>
+                  </Box>
+                ))}
+              </Box>
+
               {/* Audit timeline */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                 <SectionLabel sx={{ fontSize: 10 }}>ACTIVITY &amp; AUDIT</SectionLabel>
@@ -724,6 +773,41 @@ export const HandoverRequestsPage = () => {
           <Button variant="contained" disabled={pickedSnagIds.length === 0} onClick={() => void attachSnags()}
             sx={{ borderRadius: '10px', textTransform: 'none', fontWeight: 600, boxShadow: 'none' }}>
             Link{pickedSnagIds.length > 0 ? ` (${pickedSnagIds.length})` : ''}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Attach inspections dialog (E2) */}
+      <Dialog open={inspectionLinkOpen} onClose={() => setInspectionLinkOpen(false)} fullWidth maxWidth="xs" PaperProps={{ sx: { borderRadius: '14px' } }}>
+        <DialogTitle sx={{ fontSize: 16, fontWeight: 700 }}>Attach inspections to the handover</DialogTitle>
+        <DialogContent>
+          {projectInspections.length === 0 ? (
+            <Box sx={{ py: 2, color: BRAND.muted, fontSize: 13 }}>No unlinked inspection submissions in this project.</Box>
+          ) : (
+            <Box sx={{ maxHeight: 340, overflowY: 'auto' }}>
+              {projectInspections.map((s) => {
+                const on = pickedInspectionIds.includes(s.id);
+                return (
+                  <Box key={s.id} role="button" tabIndex={0}
+                    onClick={() => setPickedInspectionIds((p) => (on ? p.filter((id) => id !== s.id) : [...p, s.id]))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') setPickedInspectionIds((p) => (on ? p.filter((id) => id !== s.id) : [...p, s.id])); }}
+                    sx={{ display: 'flex', alignItems: 'center', gap: 1, p: '8px 10px', borderRadius: '9px', cursor: 'pointer', mb: '5px', border: `1px solid ${on ? BRAND.navy : BRAND.borderHair}`, background: on ? 'rgba(36,72,143,0.06)' : 'transparent' }}>
+                    <Box sx={{ width: 16, height: 16, borderRadius: '5px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1.5px solid ${on ? BRAND.navy : BRAND.borderStrong}`, background: on ? BRAND.navy : 'transparent' }}>
+                      {on && <Box component="span" sx={{ color: '#fff', fontSize: 11, lineHeight: 1 }}>✓</Box>}
+                    </Box>
+                    <Mono sx={{ fontSize: 10.5, color: BRAND.muted }}>{s.reference}</Mono>
+                    <Mono sx={{ fontSize: 9.5, color: BRAND.faint, textTransform: 'uppercase' }}>{String(s.status).replace(/_/g, ' ')}</Mono>
+                  </Box>
+                );
+              })}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: '12px 20px' }}>
+          <Button onClick={() => setInspectionLinkOpen(false)} sx={{ textTransform: 'none', color: BRAND.inkSoft }}>Cancel</Button>
+          <Button variant="contained" disabled={pickedInspectionIds.length === 0} onClick={() => void attachInspections()}
+            sx={{ borderRadius: '10px', textTransform: 'none', fontWeight: 600, boxShadow: 'none' }}>
+            Attach{pickedInspectionIds.length > 0 ? ` (${pickedInspectionIds.length})` : ''}
           </Button>
         </DialogActions>
       </Dialog>

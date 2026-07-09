@@ -84,6 +84,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
         Route::get('/rbac/context', [RbacController::class, 'context']);
         Route::get('/rbac/permission-presets', [RbacController::class, 'presets']);
+        Route::get('/rbac/role-matrix', [RbacController::class, 'roleMatrix']);
         Route::get('/rbac/permission-diff', [RbacController::class, 'permissionDiff']);
 
         Route::get('/projects', [ProjectController::class, 'index']);
