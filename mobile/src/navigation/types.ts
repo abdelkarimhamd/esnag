@@ -43,6 +43,7 @@ export type SnagsStackParamList = {
   }
   HandoverCreate: undefined
   AuditTrail: undefined
+  MasterDataAdmin: undefined
   Search: undefined
 }
 

@@ -11,6 +11,7 @@ import { HandoverDetailScreen } from '../screens/HandoverDetailScreen'
 import { HandoverRequestsScreen } from '../screens/HandoverRequestsScreen'
 import { InspectionLinkScreen } from '../screens/InspectionLinkScreen'
 import { InspectionsListScreen } from '../screens/InspectionsListScreen'
+import { MasterDataAdminScreen } from '../screens/MasterDataAdminScreen'
 import { SearchScreen } from '../screens/SearchScreen'
 import { SnagDetailScreen } from '../screens/SnagDetailScreen'
 import { SnagsScreen } from '../screens/SnagsScreen'
@@ -53,6 +54,7 @@ export const SnagsStackNavigator = ({ onOpenMore, notificationsBadge }: SnagsSta
       <SnagsStack.Screen name="HandoverDetail" component={HandoverDetailScreen} options={{ title: 'Handover' }} />
       <SnagsStack.Screen name="HandoverCreate" component={HandoverCreateScreen} options={{ title: 'New handover' }} />
       <SnagsStack.Screen name="AuditTrail" component={AuditTrailScreen} options={{ title: 'Audit trail' }} />
+      <SnagsStack.Screen name="MasterDataAdmin" component={MasterDataAdminScreen} options={{ title: 'Master data' }} />
       <SnagsStack.Screen name="Search" component={SearchScreen} options={{ headerShown: false }} />
     </SnagsStack.Navigator>
   )

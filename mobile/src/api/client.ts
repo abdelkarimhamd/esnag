@@ -379,6 +379,28 @@ export const apiClient = {
       organizationId,
     }),
 
+  // ── Master-data admin writes (§H / BR-FR-003/006/026/027). Gated server-side
+  //    on the master-data manage permission. ──
+  createArea: (token: string, organizationId: number, body: { project_id: number; name: string; code?: string | null }) =>
+    request<{ data: MasterDataRecord }>('/api/areas', { method: 'POST', token, organizationId, body }),
+  updateArea: (token: string, organizationId: number, id: number, body: { name?: string; code?: string | null }) =>
+    request<{ data: MasterDataRecord }>(`/api/areas/${id}`, { method: 'PUT', token, organizationId, body }),
+  deleteArea: (token: string, organizationId: number, id: number) =>
+    request<{ data: { id: number; deleted: boolean } }>(`/api/areas/${id}`, { method: 'DELETE', token, organizationId }),
+
+  createBuilding: (token: string, organizationId: number, body: { project_id: number; area_id?: number | null; name: string; code?: string | null }) =>
+    request<{ data: MasterDataRecord }>('/api/buildings', { method: 'POST', token, organizationId, body }),
+  updateBuilding: (token: string, organizationId: number, id: number, body: { area_id?: number | null; name?: string; code?: string | null }) =>
+    request<{ data: MasterDataRecord }>(`/api/buildings/${id}`, { method: 'PUT', token, organizationId, body }),
+  deleteBuilding: (token: string, organizationId: number, id: number) =>
+    request<{ data: { id: number; deleted: boolean } }>(`/api/buildings/${id}`, { method: 'DELETE', token, organizationId }),
+
+  createSnagCategory: (token: string, organizationId: number, body: { name: string; code?: string | null; project_id?: number | null; is_active?: boolean }) =>
+    request<{ data: MasterDataRecord }>('/api/snag-categories', { method: 'POST', token, organizationId, body }),
+  // Categories have no destroy route — deactivate via update (is_active=false).
+  updateSnagCategory: (token: string, organizationId: number, id: number, body: { name?: string; code?: string | null; is_active?: boolean }) =>
+    request<{ data: MasterDataRecord }>(`/api/snag-categories/${id}`, { method: 'PUT', token, organizationId, body }),
+
   listHandoverRequests: (token: string, organizationId: number, params: { project_id?: number; status?: string } = {}) => {
     const qs = new URLSearchParams()
     if (params.project_id) qs.set('project_id', String(params.project_id))
