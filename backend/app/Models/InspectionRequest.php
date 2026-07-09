@@ -25,6 +25,8 @@ class InspectionRequest extends Model
     protected $fillable = [
         'organization_id',
         'project_id',
+        'snag_id',
+        'handover_request_id',
         'inspection_submission_id',
         'reference',
         'request_type',
@@ -33,6 +35,7 @@ class InspectionRequest extends Model
         'status',
         'requested_by',
         'assigned_to',
+        'stakeholder_team_id',
         'scheduled_for',
         'completed_at',
         'metadata',
@@ -57,6 +60,11 @@ class InspectionRequest extends Model
         return $this->belongsTo(Project::class);
     }
 
+    public function snag(): BelongsTo
+    {
+        return $this->belongsTo(Snag::class);
+    }
+
     public function submission(): BelongsTo
     {
         return $this->belongsTo(InspectionSubmission::class, 'inspection_submission_id');
@@ -70,5 +78,15 @@ class InspectionRequest extends Model
     public function assignee(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_to');
+    }
+
+    public function handoverRequest(): BelongsTo
+    {
+        return $this->belongsTo(HandoverRequest::class, 'handover_request_id');
+    }
+
+    public function team(): BelongsTo
+    {
+        return $this->belongsTo(StakeholderTeam::class, 'stakeholder_team_id');
     }
 }

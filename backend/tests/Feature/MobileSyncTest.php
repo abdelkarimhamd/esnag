@@ -11,6 +11,7 @@ use App\Models\Location;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\Snag;
+use App\Models\StakeholderCompany;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Database\Seeders\RbacSeeder;
@@ -53,6 +54,9 @@ class MobileSyncTest extends TestCase
         $staleResponse->assertOk()
             ->assertJsonPath('data.0.op_id', 'stale-update')
             ->assertJsonPath('data.0.status', 'applied')
+            ->assertJsonPath('data.0.retryable', true)
+            ->assertJsonPath('data.0.retry_after_seconds', 10)
+            ->assertJsonPath('data.0.conflict_type', 'stale_update')
             ->assertJsonPath('data.0.result.conflict', true)
             ->assertJsonPath('data.0.result.policy', 'last_write_wins')
             ->assertJsonPath('data.0.result.resolution_options.0', 'use_server')
@@ -95,6 +99,45 @@ class MobileSyncTest extends TestCase
         ]);
     }
 
+    public function test_mobile_sync_creates_an_operational_snag_without_a_drawing(): void
+    {
+        [$organization, $engineer, $snag] = $this->bootstrapSnagContext();
+        $sourceOrg = StakeholderCompany::factory()->create([
+            'organization_id' => $organization->id, 'type' => 'service_provider',
+        ]);
+
+        Sanctum::actingAs($engineer);
+
+        $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->postJson('/api/mobile/sync/apply', [
+                'operations' => [
+                    [
+                        'op_id' => 'op-snag-1',
+                        'type' => 'snag.create',
+                        'payload' => [
+                            'client_uuid' => '11111111-2222-4333-8444-555555555555',
+                            'project_id' => $snag->project_id,
+                            'snag_type' => 'operational',
+                            'source_organization_id' => $sourceOrg->id,
+                            'title' => 'Chiller pump running hot',
+                            'description' => 'Raised during an operational inspection',
+                            'priority' => 'high',
+                        ],
+                    ],
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.0.status', 'applied');
+
+        $this->assertDatabaseHas('snags', [
+            'project_id' => $snag->project_id,
+            'snag_type' => 'operational',
+            'drawing_id' => null,
+            'source_organization_id' => $sourceOrg->id,
+            'title' => 'Chiller pump running hot',
+        ]);
+    }
+
     public function test_mobile_sync_status_transition_remains_server_guarded(): void
     {
         [$organization, $engineer, $snag] = $this->bootstrapSnagContext();
@@ -119,11 +162,211 @@ class MobileSyncTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('data.0.op_id', 'invalid-transition')
             ->assertJsonPath('data.0.status', 'rejected')
+            ->assertJsonPath('data.0.retryable', false)
+            ->assertJsonPath('data.0.conflict_type', 'status_transition_guarded')
             ->assertJsonPath('data.0.errors.to_status.0', 'Invalid status transition for the current snag state.');
 
         $this->assertDatabaseHas('snags', [
             'id' => $snag->id,
             'status' => SnagStatus::New->value,
+        ]);
+    }
+
+    public function test_mobile_sync_dlp_reopen_requires_thirty_character_note(): void
+    {
+        [$organization, $engineer, $snag] = $this->bootstrapSnagContext();
+
+        $snag->update([
+            'status' => SnagStatus::Assigned->value,
+            'assigned_to' => $engineer->id,
+            'is_dlp' => true,
+            'cluster' => 'North Cluster',
+            'toc_reference' => 'TOC-KG001',
+        ]);
+
+        Sanctum::actingAs($engineer);
+
+        // A short (or default mobile) note must be rejected on the sync channel too,
+        // not just on the web /transition endpoint.
+        $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->postJson('/api/mobile/sync/apply', [
+                'operations' => [
+                    [
+                        'op_id' => 'dlp-reopen-short-note',
+                        'type' => 'snag.transition',
+                        'payload' => [
+                            'snag_id' => $snag->id,
+                            'to_status' => SnagStatus::Rejected->value,
+                            'note' => 'redo it',
+                        ],
+                    ],
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.0.status', 'rejected')
+            ->assertJsonPath('data.0.errors.note.0', 'A comment of at least 30 characters is required when reopening a DLP snag for rework.');
+
+        $this->assertDatabaseHas('snags', [
+            'id' => $snag->id,
+            'status' => SnagStatus::Assigned->value,
+        ]);
+
+        // A substantive rework comment applies normally.
+        $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->postJson('/api/mobile/sync/apply', [
+                'operations' => [
+                    [
+                        'op_id' => 'dlp-reopen-full-note',
+                        'type' => 'snag.transition',
+                        'payload' => [
+                            'snag_id' => $snag->id,
+                            'to_status' => SnagStatus::Rejected->value,
+                            'note' => 'Waterproofing membrane applied incorrectly; redo the full bathroom area.',
+                        ],
+                    ],
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.0.status', 'applied');
+
+        $this->assertDatabaseHas('snags', [
+            'id' => $snag->id,
+            'status' => SnagStatus::Rejected->value,
+        ]);
+    }
+
+    public function test_mobile_sync_snag_create_rejects_incomplete_dlp_bundle(): void
+    {
+        [$organization, $engineer, $snag] = $this->bootstrapSnagContext();
+
+        Sanctum::actingAs($engineer);
+
+        // A DLP snag without cluster/TOC/trade and with a short description must
+        // be rejected on the sync channel with the same bundle rules as the web.
+        $response = $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->postJson('/api/mobile/sync/apply', [
+                'operations' => [
+                    [
+                        'op_id' => 'dlp-create-incomplete',
+                        'type' => 'snag.create',
+                        'payload' => [
+                            'project_id' => $snag->project_id,
+                            'drawing_id' => $snag->drawing_id,
+                            'title' => 'Offline DLP defect missing bundle',
+                            'description' => 'Too short',
+                            'is_dlp' => true,
+                            'pin_x' => 0.4,
+                            'pin_y' => 0.6,
+                        ],
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.op_id', 'dlp-create-incomplete')
+            ->assertJsonPath('data.0.status', 'rejected');
+
+        $errors = $response->json('data.0.errors');
+        $this->assertArrayHasKey('description', $errors);
+        $this->assertArrayHasKey('trade', $errors);
+        $this->assertArrayHasKey('cluster', $errors);
+        $this->assertArrayHasKey('toc_reference', $errors);
+
+        $this->assertDatabaseMissing('snags', [
+            'organization_id' => $organization->id,
+            'title' => 'Offline DLP defect missing bundle',
+        ]);
+    }
+
+    public function test_mobile_sync_snag_create_applies_full_dlp_bundle(): void
+    {
+        [$organization, $engineer, $snag] = $this->bootstrapSnagContext();
+
+        Sanctum::actingAs($engineer);
+
+        $response = $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->postJson('/api/mobile/sync/apply', [
+                'operations' => [
+                    [
+                        'op_id' => 'dlp-create-complete',
+                        'type' => 'snag.create',
+                        'payload' => [
+                            'project_id' => $snag->project_id,
+                            'drawing_id' => $snag->drawing_id,
+                            'title' => 'Offline DLP defect with full bundle',
+                            'description' => 'Hairline cracks across the west corridor ceiling plasterboard.',
+                            'is_dlp' => true,
+                            'cluster' => 'North Cluster',
+                            'toc_reference' => 'TOC-KG001',
+                            'trade' => 'Finishes',
+                            'pin_x' => 0.4,
+                            'pin_y' => 0.6,
+                        ],
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.op_id', 'dlp-create-complete')
+            ->assertJsonPath('data.0.status', 'applied');
+
+        $this->assertDatabaseHas('snags', [
+            'id' => $response->json('data.0.result.snag_id'),
+            'organization_id' => $organization->id,
+            'title' => 'Offline DLP defect with full bundle',
+            'is_dlp' => true,
+            'cluster' => 'North Cluster',
+            'toc_reference' => 'TOC-KG001',
+            'trade' => 'Finishes',
+        ]);
+    }
+
+    public function test_mobile_sync_snag_create_persists_area_category_and_severity(): void
+    {
+        [$organization, $engineer, $snag] = $this->bootstrapSnagContext();
+
+        $area = \App\Models\Area::factory()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $snag->project_id,
+        ]);
+        $category = \App\Models\SnagCategory::factory()->create([
+            'organization_id' => $organization->id,
+        ]);
+
+        Sanctum::actingAs($engineer);
+
+        $response = $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->postJson('/api/mobile/sync/apply', [
+                'operations' => [
+                    [
+                        'op_id' => 'create-with-taxonomy',
+                        'type' => 'snag.create',
+                        'payload' => [
+                            'project_id' => $snag->project_id,
+                            'drawing_id' => $snag->drawing_id,
+                            'title' => 'Offline snag with new taxonomy',
+                            'area_id' => $area->id,
+                            'category_id' => $category->id,
+                            'severity' => 'major',
+                            'location_text' => 'Riser shaft, level 2',
+                            'pin_x' => 0.3,
+                            'pin_y' => 0.7,
+                        ],
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.status', 'applied');
+
+        $this->assertDatabaseHas('snags', [
+            'id' => $response->json('data.0.result.snag_id'),
+            'organization_id' => $organization->id,
+            'area_id' => $area->id,
+            'category_id' => $category->id,
+            'severity' => 'major',
+            'location_text' => 'Riser shaft, level 2',
+            'snag_type' => 'construction',
         ]);
     }
 

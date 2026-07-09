@@ -25,10 +25,16 @@ jobs:
       - name: Install Dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
 
+      - name: Validate Composer Lock
+        run: composer validate --strict
+
       - name: Prepare Environment
         run: |
           cp .env.example .env
           php artisan key:generate
+
+      - name: Run API Contract and RBAC Fast Checks
+        run: php artisan test --filter="(ApiObservabilityTest|RbacAccessTest|SnagTransitionTest|MobileSyncTest)"
 
       - name: Run Feature + Unit Tests
         run: php artisan test

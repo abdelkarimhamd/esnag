@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\Concerns\InteractsWithOrganizationContext;
 use App\Http\Controllers\Controller;
+use App\Models\Building;
 use App\Models\Drawing;
 use App\Models\DrawingLocationZone;
 use App\Models\DrawingRevision;
@@ -52,7 +53,7 @@ class DrawingController extends Controller
             $projectIds = $this->accessControlService->projectIdsWithPermission($user, $organization->id, 'drawings.view');
 
             if ($projectIds === []) {
-                abort(403);
+                $this->denyWithPermissions($request, ['drawings.view'], 'You do not have permission to view drawings.');
             }
 
             $query->whereIn('project_id', $projectIds);
@@ -64,6 +65,10 @@ class DrawingController extends Controller
 
         if ($buildingId = $request->integer('building_id')) {
             $query->where('building_id', $buildingId);
+        }
+
+        if ($areaId = $request->integer('area_id')) {
+            $query->where('area_id', $areaId);
         }
 
         if ($floorId = $request->integer('floor_id')) {
@@ -88,16 +93,22 @@ class DrawingController extends Controller
         $this->authorize('create', Drawing::class);
 
         if (! $this->accessControlService->allows($request->user(), $project->organization_id, $project->id, 'drawings.manage')) {
-            abort(403);
+            $this->denyWithPermissions($request, ['drawings.manage'], 'You do not have permission to manage drawings for this project.');
         }
 
         $validated = $request->validate([
             'title' => ['required', 'string', 'max:255'],
             'code' => ['required', 'string', 'max:100'],
             'description' => ['nullable', 'string'],
+            'area_id' => ['nullable', 'integer', 'exists:areas,id'],
             'building_id' => ['nullable', 'integer', 'exists:buildings,id'],
             'floor_id' => ['nullable', 'integer', 'exists:floors,id'],
         ]);
+
+        // Auto-derive the Area from the Building when not supplied (BR-FR-028).
+        if (empty($validated['area_id']) && ! empty($validated['building_id'])) {
+            $validated['area_id'] = Building::query()->whereKey($validated['building_id'])->value('area_id');
+        }
 
         $drawing = Drawing::create([
             ...$validated,
@@ -144,14 +155,104 @@ class DrawingController extends Controller
             'title' => ['sometimes', 'required', 'string', 'max:255'],
             'code' => ['sometimes', 'required', 'string', 'max:100'],
             'description' => ['nullable', 'string'],
+            'area_id' => ['nullable', 'integer', 'exists:areas,id'],
             'building_id' => ['nullable', 'integer', 'exists:buildings,id'],
             'floor_id' => ['nullable', 'integer', 'exists:floors,id'],
         ]);
+
+        // BR-BR-016: moving a drawing off its building (reparent or unset) must not
+        // leave that building with zero drawings — the delete guard alone is not enough.
+        if (array_key_exists('building_id', $validated)
+            && $drawing->building_id !== null
+            && (int) ($validated['building_id'] ?? 0) !== (int) $drawing->building_id) {
+            $remaining = Drawing::query()
+                ->where('building_id', $drawing->building_id)
+                ->where('id', '!=', $drawing->id)
+                ->count();
+            if ($remaining === 0) {
+                abort(422, 'Cannot move the last drawing off its building (a building must retain at least one drawing).');
+            }
+        }
+
+        if (array_key_exists('building_id', $validated) && ! array_key_exists('area_id', $validated) && $validated['building_id']) {
+            $validated['area_id'] = Building::query()->whereKey($validated['building_id'])->value('area_id');
+        }
 
         $drawing->update($validated);
 
         return response()->json([
             'data' => $drawing->fresh(['currentRevision']),
+        ]);
+    }
+
+    /**
+     * Aggregated D4 overlay (item 12 / BR-FR-027/030). Returns every snag across a
+     * building's (or area's) drawings with its severity, pin coordinates and owning
+     * drawing/revision — so the client can render one combined, severity-coloured
+     * plan view per building/area instead of one drawing at a time.
+     */
+    public function aggregate(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', Drawing::class);
+        $organization = $this->currentOrganization($request);
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'building_id' => ['nullable', 'integer', 'exists:buildings,id'],
+            'area_id' => ['nullable', 'integer', 'exists:areas,id'],
+            'project_id' => ['nullable', 'integer', 'exists:projects,id'],
+        ]);
+
+        if (empty($validated['building_id']) && empty($validated['area_id'])) {
+            abort(422, 'Provide a building_id or area_id to aggregate.');
+        }
+
+        $drawingsQuery = Drawing::query()->where('organization_id', $organization->id);
+
+        if (! empty($validated['building_id'])) {
+            $drawingsQuery->where('building_id', $validated['building_id']);
+        }
+        if (! empty($validated['area_id'])) {
+            $drawingsQuery->where('area_id', $validated['area_id']);
+        }
+        if (! empty($validated['project_id'])) {
+            $drawingsQuery->where('project_id', $validated['project_id']);
+        }
+
+        $canViewAll = $this->accessControlService->allowsWithoutDelegation($user, $organization->id, null, 'drawings.view');
+        if (! $canViewAll) {
+            $projectIds = $this->accessControlService->projectIdsWithPermission($user, $organization->id, 'drawings.view');
+            if ($projectIds === []) {
+                $this->denyWithPermissions($request, ['drawings.view'], 'You do not have permission to view drawings.');
+            }
+            $drawingsQuery->whereIn('project_id', $projectIds);
+        }
+
+        $drawings = $drawingsQuery
+            ->with(['building:id,name,code,area_id', 'currentRevision:id,drawing_id,revision_label,mime_type'])
+            ->get(['id', 'title', 'code', 'area_id', 'building_id', 'floor_id', 'current_revision_id', 'project_id']);
+
+        $snags = Snag::query()
+            ->where('organization_id', $organization->id)
+            ->whereIn('drawing_id', $drawings->pluck('id'))
+            ->whereNotNull('pin_x')
+            ->whereNotNull('pin_y')
+            ->with(['sourceOrganization:id,name,code,type'])
+            ->get(['id', 'reference', 'title', 'status', 'severity', 'snag_type', 'source_organization_id', 'drawing_id', 'drawing_revision_id', 'pin_x', 'pin_y', 'building_id']);
+
+        $bySeverity = $snags
+            ->groupBy(fn (Snag $snag) => $snag->severity ?? 'unspecified')
+            ->map->count();
+
+        return response()->json([
+            'data' => [
+                'drawings' => $drawings,
+                'snags' => $snags,
+                'summary' => [
+                    'total' => $snags->count(),
+                    'by_severity' => $bySeverity,
+                ],
+            ],
         ]);
     }
 

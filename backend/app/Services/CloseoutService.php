@@ -169,6 +169,39 @@ class CloseoutService
         return $instance->completion_percentage === 100;
     }
 
+    /**
+     * Read-only close-eligibility check using already-loaded relations.
+     *
+     * Equivalent to canCloseSnag() but WITHOUT the save()/fresh() write path and the
+     * extra COUNT query, so it is safe to call from read-only (GET) request handlers.
+     * Relies on the caller having eager-loaded closeoutInstance.items.evidences
+     * (loadMissing is a no-op then); is_satisfied uses the loaded evidences collection.
+     */
+    public function isCloseoutCompleteFromLoaded(Snag $snag): bool
+    {
+        $instance = $snag->closeoutInstance;
+
+        if (! $instance) {
+            return false;
+        }
+
+        $instance->loadMissing('items.evidences');
+        $items = $instance->items;
+
+        if ($items->isEmpty()) {
+            return false;
+        }
+
+        $requiredItems = $items->filter(fn (CloseoutInstanceItem $item) => $item->required);
+
+        // Mirrors refreshInstanceProgress(): no required items => 100% complete.
+        if ($requiredItems->isEmpty()) {
+            return true;
+        }
+
+        return $requiredItems->every(fn (CloseoutInstanceItem $item) => $item->is_satisfied);
+    }
+
     public function markReviewed(CloseoutInstance $instance, User $reviewer): CloseoutInstance
     {
         $instance = $this->refreshInstanceProgress($instance);

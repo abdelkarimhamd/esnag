@@ -12,6 +12,7 @@ import {
   markOperationFailed,
   markOperationRejected,
   parseQueuePayload,
+  reclaimStaleUploadingAttachments,
   setMetaValue,
   upsertServerBuildings,
   upsertServerAttachments,
@@ -46,8 +47,11 @@ export interface SyncSummary {
 
 let syncInProgress = false
 
-const nextRetryAt = (retries: number): string => {
-  const seconds = Math.min(5 * 60, Math.max(5, 5 * 2 ** retries))
+const nextRetryAt = (retries: number, overrideSeconds?: number | null): string => {
+  const seconds =
+    typeof overrideSeconds === 'number' && overrideSeconds > 0
+      ? Math.min(60 * 60, Math.max(5, Math.round(overrideSeconds)))
+      : Math.min(5 * 60, Math.max(5, 5 * 2 ** retries))
   return new Date(Date.now() + seconds * 1000).toISOString()
 }
 
@@ -179,16 +183,41 @@ export const syncNow = async (token: string, organizationId: number): Promise<Sy
           const errorMessage = Object.values(result.errors ?? {})
             .flatMap((messages) => messages)
             .join('; ')
-          markOperationRejected(operation.op_id, errorMessage || 'Operation rejected by server.')
-          summary.rejectedOperations += 1
+          const resolvedMessage =
+            errorMessage || result.message || (result.conflict_type === 'status_transition_guarded'
+              ? 'Status transition must be validated by server workflow rules.'
+              : 'Operation rejected by server.')
+
+          if (result.retryable) {
+            const retries = operation.retries + 1
+            markOperationFailed(
+              operation.op_id,
+              retries,
+              nextRetryAt(retries, result.retry_after_seconds),
+              resolvedMessage,
+            )
+            summary.failedOperations += 1
+          } else {
+            markOperationRejected(operation.op_id, resolvedMessage)
+            summary.rejectedOperations += 1
+          }
           continue
         }
 
         const retries = operation.retries + 1
-        markOperationFailed(operation.op_id, retries, nextRetryAt(retries), result.message ?? 'Operation failed.')
+        markOperationFailed(
+          operation.op_id,
+          retries,
+          nextRetryAt(retries, result.retry_after_seconds),
+          result.message ?? 'Operation failed.',
+        )
         summary.failedOperations += 1
       }
     }
+
+    // Recover attachments stranded in 'uploading' by a crashed prior sync run before
+    // listing pending uploads, otherwise they would be excluded from sync forever.
+    reclaimStaleUploadingAttachments()
 
     const pendingAttachments = listPendingAttachments(20)
     for (const attachment of pendingAttachments) {

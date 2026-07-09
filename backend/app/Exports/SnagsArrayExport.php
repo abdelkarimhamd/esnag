@@ -51,6 +51,13 @@ class SnagsArrayExport implements FromArray, WithHeadings
             'Due Date / تاريخ الاستحقاق',
             'Closed At / تاريخ الإغلاق',
             'Created At / تاريخ الإنشاء',
+            'Severity / التصنيف',
+            'Type / النوع',
+            'Area / المنطقة',
+            'Building / المبنى',
+            'Location / الموقع',
+            'Category / الفئة',
+            'Source Organization / الجهة المصدِرة',
         ];
     }
 }

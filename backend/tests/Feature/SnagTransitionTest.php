@@ -98,6 +98,14 @@ class SnagTransitionTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.status', SnagStatus::InProgress->value);
 
+        $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->getJson("/api/snags/{$snag->id}")
+            ->assertOk()
+            ->assertJsonPath('data.workflow.current_status', SnagStatus::InProgress->value)
+            ->assertJsonPath('data.workflow.recommended_next_status', SnagStatus::ReadyForReview->value)
+            ->assertJsonPath('data.workflow.next_actions.0.action_key', 'transition.ready_for_review')
+            ->assertJsonPath('data.workflow.next_actions.0.allowed', true);
+
         $this->assertDatabaseHas('snag_status_histories', [
             'snag_id' => $snag->id,
             'to_status' => SnagStatus::Assigned->value,
@@ -205,6 +213,16 @@ class SnagTransitionTest extends TestCase
             ])
             ->assertStatus(422)
             ->assertJsonPath('errors.to_status.0', 'Closeout must be 100% complete (including required evidence) before closing this snag.');
+
+        $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->getJson("/api/snags/{$snag->id}")
+            ->assertOk()
+            ->assertJsonPath('data.workflow.current_status', SnagStatus::ReadyForReview->value)
+            ->assertJsonPath('data.workflow.can_close', false)
+            ->assertJsonPath('data.workflow.blocked.closed', 'Closeout must be 100% complete (including required evidence) before closing this snag.')
+            ->assertJsonPath('data.workflow.next_actions.0.to_status', SnagStatus::Closed->value)
+            ->assertJsonPath('data.workflow.next_actions.0.allowed', false)
+            ->assertJsonPath('data.workflow.next_actions.0.reason', 'Closeout must be 100% complete (including required evidence) before closing this snag.');
     }
 
     public function test_close_override_permission_allows_closing_without_closeout_completion(): void

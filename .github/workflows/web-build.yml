@@ -25,5 +25,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Run UI Contract and Role Visibility Fast Checks
+        run: npm run test -- --run src/layout/AppLayout.test.jsx src/components/PermissionRoute.test.jsx src/utils/apiError.test.js
+
+      - name: Run Full Tests
+        run: npm run test -- --run
+
       - name: Build
         run: npm run build

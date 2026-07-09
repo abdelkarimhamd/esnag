@@ -5,12 +5,15 @@ namespace App\Http\Controllers\Api;
 use App\Events\InspectionRealtimeMessage;
 use App\Http\Controllers\Api\Concerns\InteractsWithOrganizationContext;
 use App\Http\Controllers\Controller;
+use App\Models\InspectionContribution;
 use App\Models\InspectionSubmission;
 use App\Models\InspectionTemplate;
 use App\Models\Project;
+use App\Models\User;
 use App\Services\InspectionApprovalService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class InspectionSubmissionController extends Controller
 {
@@ -31,7 +34,9 @@ class InspectionSubmissionController extends Controller
         $query = InspectionSubmission::query()
             ->where('organization_id', $organization->id)
             ->with([
-                'template:id,name,type,project_id',
+                // `schema` is required to compute the completion_percent accessor;
+                // loading it here keeps the percent computation eager (no N+1).
+                'template:id,name,type,project_id,schema',
                 'project:id,name,code',
                 'creator:id,name,email',
                 'submitter:id,name,email',
@@ -64,6 +69,10 @@ class InspectionSubmissionController extends Controller
         $submissions = $query
             ->orderByDesc('created_at')
             ->paginate($perPage);
+
+        // Expose the computed completion_percent on every row (template schema is
+        // already eager-loaded above, so this stays free of per-row queries).
+        $submissions->getCollection()->each->append('completion_percent');
 
         return response()->json($submissions);
     }
@@ -101,6 +110,9 @@ class InspectionSubmissionController extends Controller
             'created_by' => $request->user()->id,
             'last_updated_by' => $request->user()->id,
         ]);
+
+        // Attribute the initial observations to their author + party (BR-BR-002/017).
+        $this->recordContributions($submission, $request->user(), [], $validated['form_data'] ?? []);
 
         event(new InspectionRealtimeMessage($organization->id, [
             'action' => 'submission_created',
@@ -141,7 +153,14 @@ class InspectionSubmissionController extends Controller
             'requests' => fn ($query) => $query
                 ->with(['requester:id,name,email', 'assignee:id,name,email'])
                 ->orderByDesc('created_at'),
+            'contributions' => fn ($query) => $query
+                ->with(['user:id,name,email', 'company:id,name,code,type'])
+                ->orderBy('created_at'),
         ]);
+
+        // Template (with schema) is loaded above, so the completion_percent accessor
+        // computes without extra queries.
+        $inspectionSubmission->append('completion_percent');
 
         return response()->json([
             'data' => $inspectionSubmission,
@@ -157,13 +176,26 @@ class InspectionSubmissionController extends Controller
             abort(422, 'Submission cannot be edited in current status.');
         }
 
+        // Submit-lock (BR-BR-002): once a submission has been submitted and is under
+        // review, the inspecting team may no longer edit it — only a reviewer/FMMP may.
+        if ($inspectionSubmission->status === InspectionSubmission::STATUS_IN_REVIEW
+            && ! $request->user()->can('inspections.approvals.review')) {
+            abort(403, 'A submitted inspection under review can only be edited by a reviewer.');
+        }
+
         $validated = $request->validate([
             'form_data' => ['nullable', 'array'],
         ]);
 
-        $inspectionSubmission->form_data = $validated['form_data'] ?? $inspectionSubmission->form_data;
+        // Merge (append) rather than overwrite, so multiple contributors accumulate
+        // their observations on the same submission (BR-BR-002/017).
+        $prior = is_array($inspectionSubmission->form_data) ? $inspectionSubmission->form_data : [];
+        $incoming = $validated['form_data'] ?? [];
+        $inspectionSubmission->form_data = array_merge($prior, $incoming);
         $inspectionSubmission->last_updated_by = $request->user()->id;
         $inspectionSubmission->save();
+
+        $this->recordContributions($inspectionSubmission, $request->user(), $prior, $incoming);
 
         event(new InspectionRealtimeMessage($inspectionSubmission->organization_id, [
             'action' => 'submission_updated',
@@ -206,5 +238,48 @@ class InspectionSubmissionController extends Controller
             ->count() + 1;
 
         return 'INSP-'.str_pad((string) $next, 5, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Record an attributed contribution for each observation field the actor
+     * added or changed in this update (BR-BR-002/017).
+     *
+     * @param  array<string, mixed>  $priorForm
+     * @param  array<string, mixed>  $newForm
+     */
+    private function recordContributions(InspectionSubmission $submission, User $user, array $priorForm, array $newForm): void
+    {
+        if ($newForm === []) {
+            return;
+        }
+
+        $companyId = $this->resolveActorCompanyId($user, $submission->organization_id);
+
+        foreach ($newForm as $key => $value) {
+            if (array_key_exists($key, $priorForm) && $priorForm[$key] === $value) {
+                continue; // unchanged — not a new contribution
+            }
+
+            InspectionContribution::query()->create([
+                'organization_id' => $submission->organization_id,
+                'inspection_submission_id' => $submission->id,
+                'user_id' => $user->id,
+                'stakeholder_company_id' => $companyId,
+                'field_key' => (string) $key,
+                'contribution_type' => 'observation',
+            ]);
+        }
+    }
+
+    private function resolveActorCompanyId(User $user, int $organizationId): ?int
+    {
+        $companyId = DB::table('company_user')
+            ->where('organization_id', $organizationId)
+            ->where('user_id', $user->id)
+            ->where('is_active', true)
+            ->orderByDesc('is_primary')
+            ->value('company_id');
+
+        return $companyId ? (int) $companyId : null;
     }
 }

@@ -1,8 +1,12 @@
 <?php
 
+use App\Http\Controllers\Api\AreaController;
+use App\Http\Controllers\Api\AuditController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BuildingController;
 use App\Http\Controllers\Api\CloseoutInstanceController;
 use App\Http\Controllers\Api\CloseoutTemplateController;
+use App\Http\Controllers\Api\CommissioningPackController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DashboardConfigController;
 use App\Http\Controllers\Api\DelegationRuleController;
@@ -10,6 +14,9 @@ use App\Http\Controllers\Api\DrawingController;
 use App\Http\Controllers\Api\EquipmentController;
 use App\Http\Controllers\Api\EquipmentMaintenanceLogController;
 use App\Http\Controllers\Api\ExportController;
+use App\Http\Controllers\Api\FloorController;
+use App\Http\Controllers\Api\HandoverRequestController;
+use App\Http\Controllers\Api\HandoverWorkflowController;
 use App\Http\Controllers\Api\InspectionApprovalController;
 use App\Http\Controllers\Api\InspectionApprovalMessageController;
 use App\Http\Controllers\Api\InspectionReportController;
@@ -30,10 +37,14 @@ use App\Http\Controllers\Api\OnboardingTourController;
 use App\Http\Controllers\Api\OpsAdminController;
 use App\Http\Controllers\Api\OrganizationController;
 use App\Http\Controllers\Api\ProjectController;
+use App\Http\Controllers\Api\PunchListController;
 use App\Http\Controllers\Api\RbacController;
 use App\Http\Controllers\Api\RootCauseCategoryController;
 use App\Http\Controllers\Api\SnagAttachmentController;
+use App\Http\Controllers\Api\SnagInspectionController;
+use App\Http\Controllers\Api\SearchController;
 use App\Http\Controllers\Api\SnagBulkActionController;
+use App\Http\Controllers\Api\SnagCategoryController;
 use App\Http\Controllers\Api\SnagCommentController;
 use App\Http\Controllers\Api\SnagController;
 use App\Http\Controllers\Api\SnagEscalationRuleController;
@@ -41,14 +52,22 @@ use App\Http\Controllers\Api\SnagStatusController;
 use App\Http\Controllers\Api\SnagWatcherController;
 use App\Http\Controllers\Api\SnagReminderPolicyController;
 use App\Http\Controllers\Api\StakeholderController;
+use App\Http\Controllers\Api\TakingOverCertificateController;
 use App\Http\Controllers\Api\WorkflowAutomationRuleController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function (): void {
-    Route::post('/mobile-login', [AuthController::class, 'mobileLogin']);
+    Route::post('/mobile-login', [AuthController::class, 'mobileLogin'])->middleware('throttle:auth');
+    // Token-issuing email-OTP sign-in for mobile (item 15; SMS deferred per OD-14).
+    Route::post('/otp/mobile-request', [AuthController::class, 'mobileRequestOtp'])->middleware('throttle:auth');
+    Route::post('/otp/mobile-verify', [AuthController::class, 'mobileVerifyOtp'])->middleware('throttle:auth');
 
     Route::middleware('web')->group(function (): void {
-        Route::post('/login', [AuthController::class, 'login']);
+        Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:auth');
+        // Email one-time-passcode sign-in (item 15). SMS channel is deferred (OD-14).
+        Route::post('/otp/request', [AuthController::class, 'requestOtp'])->middleware('throttle:auth');
+        Route::post('/otp/resend', [AuthController::class, 'requestOtp'])->middleware('throttle:auth');
+        Route::post('/otp/verify', [AuthController::class, 'verifyOtp'])->middleware('throttle:auth');
 
         Route::middleware('auth:sanctum')->group(function (): void {
             Route::post('/logout', [AuthController::class, 'logout']);
@@ -73,6 +92,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
         Route::get('/rbac/context', [RbacController::class, 'context']);
         Route::get('/rbac/permission-presets', [RbacController::class, 'presets']);
+        Route::get('/rbac/role-matrix', [RbacController::class, 'roleMatrix']);
         Route::get('/rbac/permission-diff', [RbacController::class, 'permissionDiff']);
 
         Route::get('/projects', [ProjectController::class, 'index']);
@@ -84,6 +104,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
         Route::middleware('feature:drawings')->group(function (): void {
             Route::get('/drawings', [DrawingController::class, 'index']);
+            Route::get('/drawings/aggregate', [DrawingController::class, 'aggregate']);
             Route::post('/projects/{project}/drawings', [DrawingController::class, 'store']);
             Route::get('/drawings/{drawing}', [DrawingController::class, 'show']);
             Route::put('/drawings/{drawing}', [DrawingController::class, 'update']);
@@ -98,6 +119,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
         Route::get('/snags', [SnagController::class, 'index']);
         Route::post('/snags/bulk-update', [SnagBulkActionController::class, 'update']);
+        Route::post('/snags/bulk-transition', [SnagBulkActionController::class, 'transition']);
         Route::post('/snags/bulk-export', [SnagBulkActionController::class, 'export']);
         Route::post('/snags', [SnagController::class, 'store']);
         Route::get('/snags/{snag}', [SnagController::class, 'show']);
@@ -114,6 +136,16 @@ Route::middleware('auth:sanctum')->group(function (): void {
         Route::delete('/snags/{snag}/watchers/{user}', [SnagWatcherController::class, 'destroy']);
         Route::post('/snags/{snag}/attachments', [SnagAttachmentController::class, 'store'])->middleware('throttle:uploads');
         Route::get('/snag-attachments/{attachment}/download', [SnagAttachmentController::class, 'download']);
+
+        // Snag inspections — request one (assign a team), then record it on site.
+        Route::get('/snags/{snag}/inspection-requests', [SnagInspectionController::class, 'requests']);
+        Route::post('/snags/{snag}/inspection-requests', [SnagInspectionController::class, 'requestInspection']);
+        Route::get('/snags/{snag}/inspections', [SnagInspectionController::class, 'index']);
+        Route::post('/snags/{snag}/inspections', [SnagInspectionController::class, 'store']);
+        Route::get('/snag-inspections/{snagInspection}', [SnagInspectionController::class, 'show']);
+        Route::put('/snag-inspections/{snagInspection}', [SnagInspectionController::class, 'update']);
+        Route::post('/snag-inspections/{snagInspection}/attachments', [SnagInspectionController::class, 'storeAttachment'])->middleware('throttle:uploads');
+        Route::get('/snag-inspection-attachments/{attachment}/download', [SnagInspectionController::class, 'downloadAttachment']);
         Route::get('/snag-escalation-rules', [SnagEscalationRuleController::class, 'index']);
         Route::post('/snag-escalation-rules', [SnagEscalationRuleController::class, 'store']);
         Route::put('/snag-escalation-rules/{snagEscalationRule}', [SnagEscalationRuleController::class, 'update']);
@@ -139,6 +171,8 @@ Route::middleware('auth:sanctum')->group(function (): void {
         Route::get('/delegations', [DelegationRuleController::class, 'index']);
         Route::post('/delegations', [DelegationRuleController::class, 'store']);
         Route::delete('/delegations/{delegationRule}', [DelegationRuleController::class, 'destroy']);
+
+        Route::get('/search', [SearchController::class, 'index']);
 
         Route::get('/kanban/snags', [KanbanController::class, 'index'])->middleware('feature:kanban');
         Route::get('/dashboard/kpis', [DashboardController::class, 'kpis'])->middleware('feature:dashboard');
@@ -166,6 +200,32 @@ Route::middleware('auth:sanctum')->group(function (): void {
         Route::post('/root-cause-categories', [RootCauseCategoryController::class, 'store']);
         Route::put('/root-cause-categories/{rootCauseCategory}', [RootCauseCategoryController::class, 'update']);
 
+        // Snag category master (BR-FR-026) — distinct from root cause and severity.
+        Route::get('/snag-categories', [SnagCategoryController::class, 'index']);
+        Route::post('/snag-categories', [SnagCategoryController::class, 'store']);
+        Route::put('/snag-categories/{snagCategory}', [SnagCategoryController::class, 'update']);
+
+        // Location hierarchy master data: Area -> Building -> Floor -> Location (BR-FR-028/030).
+        Route::get('/areas', [AreaController::class, 'index']);
+        Route::post('/areas', [AreaController::class, 'store']);
+        Route::put('/areas/{area}', [AreaController::class, 'update']);
+        Route::delete('/areas/{area}', [AreaController::class, 'destroy']);
+
+        Route::get('/buildings', [BuildingController::class, 'index']);
+        Route::post('/buildings', [BuildingController::class, 'store']);
+        Route::put('/buildings/{building}', [BuildingController::class, 'update']);
+        Route::delete('/buildings/{building}', [BuildingController::class, 'destroy']);
+
+        Route::get('/floors', [FloorController::class, 'index']);
+        Route::post('/floors', [FloorController::class, 'store']);
+        Route::put('/floors/{floor}', [FloorController::class, 'update']);
+        Route::delete('/floors/{floor}', [FloorController::class, 'destroy']);
+
+        Route::get('/locations', [LocationController::class, 'index']);
+        Route::post('/locations', [LocationController::class, 'store']);
+        Route::put('/locations/{location}', [LocationController::class, 'update']);
+        Route::delete('/locations/{location}', [LocationController::class, 'destroy']);
+
         Route::get('/closeout/templates', [CloseoutTemplateController::class, 'index']);
         Route::post('/closeout/templates', [CloseoutTemplateController::class, 'store']);
         Route::post('/closeout/templates/{closeoutTemplate}/clone', [CloseoutTemplateController::class, 'cloneFromLibrary']);
@@ -179,6 +239,75 @@ Route::middleware('auth:sanctum')->group(function (): void {
         Route::patch('/closeout/items/{item}', [CloseoutInstanceController::class, 'updateItem']);
         Route::post('/closeout/items/{item}/evidence', [CloseoutInstanceController::class, 'uploadEvidence'])->middleware('throttle:uploads');
         Route::get('/closeout/evidence/{evidence}/download', [CloseoutInstanceController::class, 'downloadEvidence']);
+
+        Route::get('/punch-lists', [PunchListController::class, 'index']);
+        Route::post('/punch-lists', [PunchListController::class, 'store']);
+        Route::get('/punch-lists/{punchList}', [PunchListController::class, 'show']);
+        Route::put('/punch-lists/{punchList}', [PunchListController::class, 'update']);
+        Route::delete('/punch-lists/{punchList}', [PunchListController::class, 'destroy']);
+        Route::post('/punch-lists/{punchList}/snags', [PunchListController::class, 'attachSnags']);
+        Route::delete('/punch-lists/{punchList}/snags/{snag}', [PunchListController::class, 'detachSnag']);
+
+        Route::get('/commissioning/overview', [CommissioningPackController::class, 'overview']);
+        Route::get('/commissioning/packs', [CommissioningPackController::class, 'index']);
+        Route::post('/commissioning/packs', [CommissioningPackController::class, 'store']);
+        Route::get('/commissioning/packs/{commissioningPack}', [CommissioningPackController::class, 'show']);
+        Route::put('/commissioning/packs/{commissioningPack}', [CommissioningPackController::class, 'update']);
+        Route::delete('/commissioning/packs/{commissioningPack}', [CommissioningPackController::class, 'destroy']);
+        Route::post('/commissioning/packs/{commissioningPack}/advance-stage', [CommissioningPackController::class, 'advanceStage']);
+        Route::post('/commissioning/packs/{commissioningPack}/witness-signoffs', [CommissioningPackController::class, 'storeWitnessSignoff']);
+        Route::post('/commissioning/packs/{commissioningPack}/submissions', [CommissioningPackController::class, 'attachSubmission']);
+        Route::delete('/commissioning/packs/{commissioningPack}/submissions/{inspectionSubmission}', [CommissioningPackController::class, 'detachSubmission']);
+
+        Route::get('/handover/overview', [TakingOverCertificateController::class, 'overview']);
+        Route::get('/handover/next-reference', [TakingOverCertificateController::class, 'nextReferenceSuggestion']);
+        Route::get('/handover/certificates', [TakingOverCertificateController::class, 'index']);
+        Route::post('/handover/certificates', [TakingOverCertificateController::class, 'store']);
+        Route::get('/handover/certificates/{takingOverCertificate}', [TakingOverCertificateController::class, 'show']);
+        Route::put('/handover/certificates/{takingOverCertificate}', [TakingOverCertificateController::class, 'update']);
+        Route::delete('/handover/certificates/{takingOverCertificate}', [TakingOverCertificateController::class, 'destroy']);
+        Route::post('/handover/certificates/{takingOverCertificate}/issue', [TakingOverCertificateController::class, 'issue']);
+        Route::post('/handover/certificates/{takingOverCertificate}/sign', [TakingOverCertificateController::class, 'sign']);
+        Route::post('/handover/certificates/{takingOverCertificate}/close', [TakingOverCertificateController::class, 'close']);
+        Route::post('/handover/certificates/{takingOverCertificate}/punch-lists', [TakingOverCertificateController::class, 'attachPunchList']);
+        Route::post('/handover/certificates/{takingOverCertificate}/snags', [TakingOverCertificateController::class, 'attachSnags']);
+        Route::post('/handover/certificates/{takingOverCertificate}/documents', [TakingOverCertificateController::class, 'storeDocument']);
+        Route::put('/handover/certificates/{takingOverCertificate}/documents/{item}', [TakingOverCertificateController::class, 'updateDocument']);
+        Route::post('/handover/certificates/{takingOverCertificate}/documents/{item}/upload', [TakingOverCertificateController::class, 'uploadDocument'])->middleware('throttle:uploads');
+        Route::get('/handover/certificates/{takingOverCertificate}/documents/{item}/download', [TakingOverCertificateController::class, 'downloadDocument']);
+        Route::delete('/handover/certificates/{takingOverCertificate}/documents/{item}', [TakingOverCertificateController::class, 'destroyDocument']);
+
+        // Multi-party handover ROUTING engine (BR-FR-001..008). Distinct from the
+        // /handover/* Taking-Over Certificate feature above.
+        Route::get('/handovers/workflows', [HandoverWorkflowController::class, 'index']);
+        Route::post('/handovers/workflows', [HandoverWorkflowController::class, 'store']);
+        Route::get('/handovers/workflows/resolve', [HandoverWorkflowController::class, 'resolve']);
+        Route::get('/handovers/workflows/{handoverWorkflow}', [HandoverWorkflowController::class, 'show']);
+
+        Route::get('/handovers/requests', [HandoverRequestController::class, 'index']);
+        Route::post('/handovers/requests', [HandoverRequestController::class, 'store']);
+        Route::get('/handovers/requests/{handoverRequest}', [HandoverRequestController::class, 'show']);
+        Route::get('/handovers/requests/{handoverRequest}/summary', [HandoverRequestController::class, 'summary']);
+        Route::get('/handovers/requests/{handoverRequest}/events', [HandoverRequestController::class, 'events']);
+        Route::get('/handovers/requests/{handoverRequest}/audit-export', [HandoverRequestController::class, 'auditExport']);
+        Route::post('/handovers/requests/{handoverRequest}/submit', [HandoverRequestController::class, 'submit']);
+        Route::post('/handovers/requests/{handoverRequest}/act', [HandoverRequestController::class, 'act']);
+        Route::post('/handovers/requests/{handoverRequest}/assign', [HandoverRequestController::class, 'assign']);
+        Route::post('/handovers/requests/{handoverRequest}/close', [HandoverRequestController::class, 'close']);
+        Route::post('/handovers/requests/{handoverRequest}/cancel', [HandoverRequestController::class, 'cancel']);
+        Route::post('/handovers/requests/{handoverRequest}/snags', [HandoverRequestController::class, 'attachSnags']);
+        Route::post('/handovers/requests/{handoverRequest}/inspections', [HandoverRequestController::class, 'attachInspections']);
+        Route::post('/handovers/requests/{handoverRequest}/request-inspection', [HandoverRequestController::class, 'requestInspection']);
+        Route::get('/handovers/requests/{handoverRequest}/attachments', [HandoverRequestController::class, 'attachments']);
+        Route::post('/handovers/requests/{handoverRequest}/attachments', [HandoverRequestController::class, 'storeAttachment'])->middleware('throttle:uploads');
+        Route::get('/handovers/requests/{handoverRequest}/attachments/{attachment}', [HandoverRequestController::class, 'downloadAttachment']);
+
+        Route::get('/handovers/requests/{handoverRequest}/comments', [HandoverRequestController::class, 'comments']);
+        Route::post('/handovers/requests/{handoverRequest}/comments', [HandoverRequestController::class, 'storeComment']);
+
+        // Unified cross-entity audit trail (item 9 / BR-FR-009/010, BR-BR-013, §11.3).
+        Route::get('/audit/events', [AuditController::class, 'index']);
+        Route::get('/audit/events/export', [AuditController::class, 'export']);
 
         Route::middleware('feature:exports')->group(function (): void {
             Route::get('/exports', [ExportController::class, 'index']);

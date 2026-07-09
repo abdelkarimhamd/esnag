@@ -1,26 +1,19 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { useMemo, useState } from 'react'
-import {
-  Alert,
-  Image,
-  PanResponder,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-  type LayoutChangeEvent,
-} from 'react-native'
+import { Alert, Image, PanResponder, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native'
 import { optimizePickedAsset, persistAnnotationPayload, type AnnotationPoint } from '../attachments/processing'
 import type { SnagsStackParamList } from '../navigation/types'
 import { enqueueAttachmentUpload } from '../sync/operations'
 import { useSync } from '../sync/SyncProvider'
+import { useAppTheme } from '../theme/ThemeProvider'
+import { Button, Card, ScreenContainer, SectionHeader } from '../ui'
 
 type Props = NativeStackScreenProps<SnagsStackParamList, 'AnnotateAttachment'>
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
 export const AttachmentAnnotationScreen = ({ route, navigation }: Props) => {
+  const theme = useAppTheme()
   const { refreshQueueSize } = useSync()
   const [strokes, setStrokes] = useState<AnnotationPoint[][]>([])
   const [currentStroke, setCurrentStroke] = useState<AnnotationPoint[]>([])
@@ -35,10 +28,7 @@ export const AttachmentAnnotationScreen = ({ route, navigation }: Props) => {
   const convertTouchToPoint = (x: number, y: number): AnnotationPoint => {
     const normalizedX = clamp(x / Math.max(1, canvasSize.width), 0, 1)
     const normalizedY = clamp(y / Math.max(1, canvasSize.height), 0, 1)
-    return {
-      x: normalizedX,
-      y: normalizedY,
-    }
+    return { x: normalizedX, y: normalizedY }
   }
 
   const onCanvasLayout = (event: LayoutChangeEvent) => {
@@ -65,7 +55,6 @@ export const AttachmentAnnotationScreen = ({ route, navigation }: Props) => {
             if (current.length < 2) {
               return []
             }
-
             setStrokes((existing) => [...existing, current])
             return []
           })
@@ -77,10 +66,7 @@ export const AttachmentAnnotationScreen = ({ route, navigation }: Props) => {
     [canvasSize.width, canvasSize.height],
   )
 
-  const allStrokes = useMemo(
-    () => [...strokes, ...(currentStroke.length > 1 ? [currentStroke] : [])],
-    [strokes, currentStroke],
-  )
+  const allStrokes = useMemo(() => [...strokes, ...(currentStroke.length > 1 ? [currentStroke] : [])], [strokes, currentStroke])
 
   const renderStrokeSegments = (stroke: AnnotationPoint[], keyPrefix: string) =>
     stroke.slice(1).map((point, index) => {
@@ -102,6 +88,7 @@ export const AttachmentAnnotationScreen = ({ route, navigation }: Props) => {
               top: y1,
               width: length,
               transform: [{ rotate: `${angle}deg` }],
+              backgroundColor: theme.colors.warning,
             },
           ]}
         />
@@ -162,62 +149,44 @@ export const AttachmentAnnotationScreen = ({ route, navigation }: Props) => {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Offline Annotation</Text>
-      <Text style={styles.caption}>Draw notes on top of the image. A markup JSON file is queued with the attachment.</Text>
+    <ScreenContainer scroll>
+      <SectionHeader
+        title="Offline Annotation"
+        subtitle="Draw notes on the image and queue a markup JSON attachment."
+      />
 
-      <View style={styles.canvasWrapper} onLayout={onCanvasLayout}>
-        <Image source={{ uri: route.params.assetUri }} style={[styles.image, { aspectRatio: imageAspectRatio }]} resizeMode="contain" />
-        <View style={styles.overlay} {...panResponder.panHandlers}>
-          {allStrokes.map((stroke, index) => (
-            <View key={`stroke-${index}`} style={StyleSheet.absoluteFill}>
-              {renderStrokeSegments(stroke, `stroke-${index}`)}
-            </View>
-          ))}
+      <Card elevated>
+        <View style={[styles.canvasWrapper, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated }]} onLayout={onCanvasLayout}>
+          <Image source={{ uri: route.params.assetUri }} style={[styles.image, { aspectRatio: imageAspectRatio }]} resizeMode="contain" />
+          <View style={styles.overlay} {...panResponder.panHandlers}>
+            {allStrokes.map((stroke, index) => (
+              <View key={`stroke-${index}`} style={StyleSheet.absoluteFill}>
+                {renderStrokeSegments(stroke, `stroke-${index}`)}
+              </View>
+            ))}
+          </View>
         </View>
-      </View>
 
-      <View style={styles.actionsRow}>
-        <Pressable
-          style={styles.secondaryButton}
-          onPress={() => setStrokes((current) => current.slice(0, Math.max(0, current.length - 1)))}
-        >
-          <Text style={styles.secondaryButtonText}>Undo</Text>
-        </Pressable>
-        <Pressable style={styles.secondaryButton} onPress={() => setStrokes([])}>
-          <Text style={styles.secondaryButtonText}>Clear</Text>
-        </Pressable>
-      </View>
-
-      <Pressable style={[styles.primaryButton, saving && styles.buttonDisabled]} disabled={saving} onPress={() => void saveAnnotatedAttachment()}>
-        <Text style={styles.primaryButtonText}>{saving ? 'Queueing...' : 'Queue Attachment + Annotation'}</Text>
-      </Pressable>
-    </ScrollView>
+        <Text style={{ color: theme.colors.textMuted, fontSize: 12 }}>
+          Draw with one finger. Use Undo/Clear before queueing.
+        </Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          <Button label="Undo" variant="secondary" onPress={() => setStrokes((current) => current.slice(0, Math.max(0, current.length - 1)))} />
+          <Button label="Clear" variant="ghost" onPress={() => setStrokes([])} />
+          <Button label={saving ? 'Queueing...' : 'Queue Attachment + Annotation'} loading={saving} onPress={() => void saveAnnotatedAttachment()} />
+        </View>
+      </Card>
+    </ScreenContainer>
   )
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 16,
-    gap: 10,
-    backgroundColor: '#F8FAFC',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  caption: {
-    color: '#475569',
-  },
   canvasWrapper: {
     position: 'relative',
     width: '100%',
     borderRadius: 12,
     overflow: 'hidden',
-    borderColor: '#CBD5E1',
     borderWidth: 1,
-    backgroundColor: '#0F172A',
   },
   image: {
     width: '100%',
@@ -228,37 +197,6 @@ const styles = StyleSheet.create({
   segment: {
     position: 'absolute',
     height: 3,
-    backgroundColor: '#F97316',
     borderRadius: 3,
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  secondaryButton: {
-    flex: 1,
-    borderColor: '#0EA5E9',
-    borderWidth: 1,
-    borderRadius: 10,
-    alignItems: 'center',
-    paddingVertical: 10,
-    backgroundColor: '#F0F9FF',
-  },
-  secondaryButtonText: {
-    color: '#0369A1',
-    fontWeight: '700',
-  },
-  primaryButton: {
-    backgroundColor: '#0369A1',
-    borderRadius: 10,
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  primaryButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  buttonDisabled: {
-    opacity: 0.65,
   },
 })

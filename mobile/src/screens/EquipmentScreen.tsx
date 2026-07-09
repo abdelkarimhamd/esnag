@@ -1,27 +1,26 @@
 import { CameraView, useCameraPermissions } from 'expo-camera'
 import { useFocusEffect } from '@react-navigation/native'
 import { useCallback, useMemo, useState } from 'react'
-import {
-  Alert,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native'
+import { Alert, Modal, StyleSheet, Text, View } from 'react-native'
 import { apiClient } from '../api/client'
 import { listEquipment, listEquipmentLogs, upsertServerEquipment, upsertServerEquipmentLogs } from '../db/store'
 import { useAuth } from '../providers/AuthProvider'
 import { useSync } from '../sync/SyncProvider'
+import { useAppTheme } from '../theme/ThemeProvider'
 import type { EquipmentLogRecord, EquipmentRecord } from '../types'
+import { Button, Card, EmptyState, ListItem, ScreenContainer, SectionHeader, Select, StatusPill, TextField } from '../ui'
 
-const statusColor = (status: string) => {
-  if (status === 'critical') return '#B91C1C'
-  if (status === 'warn') return '#B45309'
-  if (status === 'ok') return '#047857'
-  return '#334155'
+const statusTone = (status: string): 'success' | 'warning' | 'danger' | 'info' => {
+  if (status === 'critical') {
+    return 'danger'
+  }
+  if (status === 'warn') {
+    return 'warning'
+  }
+  if (status === 'ok') {
+    return 'success'
+  }
+  return 'info'
 }
 
 export const EquipmentScreen = () => {
@@ -77,13 +76,7 @@ export const EquipmentScreen = () => {
     }
 
     return equipmentRows.filter((row) => {
-      return (
-        row.code.toLowerCase().includes(term) ||
-        row.name.toLowerCase().includes(term) ||
-        String(row.barcode ?? '')
-          .toLowerCase()
-          .includes(term)
-      )
+      return row.code.toLowerCase().includes(term) || row.name.toLowerCase().includes(term) || String(row.barcode ?? '').toLowerCase().includes(term)
     })
   }, [equipmentRows, search])
 
@@ -116,92 +109,91 @@ export const EquipmentScreen = () => {
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Equipment</Text>
-        <Pressable style={styles.refreshButton} onPress={() => void refreshFromServer()}>
-          <Text style={styles.refreshButtonText}>Refresh</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.searchRow}>
-        <TextInput
+    <ScreenContainer scroll>
+      <SectionHeader title="Equipment" subtitle="Asset status, barcode lookup, and maintenance logs." />
+      <Card elevated>
+        <TextField
           value={search}
           onChangeText={setSearch}
-          placeholder="Search code/name/barcode"
-          style={styles.searchInput}
+          placeholder="Search by code, name, or barcode"
+          label="Search"
         />
-        <Pressable style={styles.scanButton} onPress={() => void openScanner()}>
-          <Text style={styles.scanButtonText}>Scan</Text>
-        </Pressable>
-      </View>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          <Button label="Refresh" onPress={() => void refreshFromServer()} />
+          <Button label="Scan barcode" variant="secondary" onPress={() => void openScanner()} />
+        </View>
+      </Card>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {filteredRows.map((row) => (
-          <Pressable
-            key={row.id}
-            style={[styles.card, selectedEquipment?.id === row.id && styles.cardActive]}
-            onPress={() => {
-              setSelectedEquipment(row)
-              setLogs(listEquipmentLogs(row.id))
-            }}
-          >
-            <Text style={styles.cardCode}>{row.code}</Text>
-            <Text style={styles.cardTitle}>{row.name}</Text>
-            <Text style={[styles.cardStatus, { color: statusColor(row.status) }]}>
-              {row.status.toUpperCase()} {row.barcode ? `| ${row.barcode}` : ''}
-            </Text>
-          </Pressable>
-        ))}
-
-        {filteredRows.length === 0 ? <Text style={styles.empty}>No equipment found.</Text> : null}
-
-        {selectedEquipment ? (
-          <View style={styles.logsContainer}>
-            <Text style={styles.sectionTitle}>Maintenance Logs</Text>
-            {logs.map((log) => (
-              <View key={log.id} style={styles.logCard}>
-                <Text style={[styles.logStatus, { color: statusColor(log.status) }]}>{log.status.toUpperCase()}</Text>
-                <Text style={styles.logText}>{log.description ?? 'No description'}</Text>
-                {log.action_taken ? <Text style={styles.logMeta}>Action: {log.action_taken}</Text> : null}
-                <Text style={styles.logMeta}>{new Date(log.occurred_at).toLocaleString()}</Text>
-              </View>
+      <Card elevated>
+        <SectionHeader title={`Equipment (${filteredRows.length})`} />
+        {filteredRows.length === 0 ? (
+          <EmptyState title="No equipment found" message="Try another search term or refresh from server." />
+        ) : (
+          <View style={{ gap: 8 }}>
+            {filteredRows.map((row) => (
+              <ListItem
+                key={row.id}
+                selected={selectedEquipment?.id === row.id}
+                onPress={() => {
+                  setSelectedEquipment(row)
+                  setLogs(listEquipmentLogs(row.id))
+                }}
+                title={`${row.code} - ${row.name}`}
+                subtitle={row.barcode ? `Barcode ${row.barcode}` : 'No barcode'}
+                right={<StatusPill label={row.status} tone={statusTone(row.status)} />}
+              />
             ))}
+          </View>
+        )}
+      </Card>
 
-            {logs.length === 0 ? <Text style={styles.empty}>No logs for this equipment yet.</Text> : null}
-
-            <Text style={styles.sectionTitle}>Add Log</Text>
-            <View style={styles.statusRow}>
-              {(['ok', 'warn', 'critical'] as const).map((status) => (
-                <Pressable
-                  key={status}
-                  style={[styles.statusChip, logStatus === status && styles.statusChipActive]}
-                  onPress={() => setLogStatus(status)}
-                >
-                  <Text style={[styles.statusChipText, logStatus === status && styles.statusChipTextActive]}>{status}</Text>
-                </Pressable>
+      {selectedEquipment ? (
+        <Card elevated>
+          <SectionHeader
+            title="Maintenance Logs"
+            subtitle={`${selectedEquipment.code} • ${selectedEquipment.name}`}
+          />
+          {logs.length === 0 ? (
+            <EmptyState title="No logs yet" message="Add the first maintenance log below." />
+          ) : (
+            <View style={{ gap: 8 }}>
+              {logs.map((log) => (
+                <ListItem
+                  key={log.id}
+                  title={log.description ?? 'No description'}
+                  subtitle={`${new Date(log.occurred_at).toLocaleString()}${log.action_taken ? ` • Action: ${log.action_taken}` : ''}`}
+                  right={<StatusPill label={log.status} tone={statusTone(log.status)} />}
+                />
               ))}
             </View>
-            <TextInput
-              style={[styles.searchInput, styles.multiline]}
-              placeholder="Description"
-              multiline
-              value={logDescription}
-              onChangeText={setLogDescription}
-            />
-            <TextInput
-              style={[styles.searchInput, styles.multiline]}
-              placeholder="Action taken"
-              multiline
-              value={logAction}
-              onChangeText={setLogAction}
-            />
-            <Pressable style={styles.submitButton} onPress={() => void submitMaintenanceLog()}>
-              <Text style={styles.submitButtonText}>Submit Log</Text>
-            </Pressable>
-          </View>
-        ) : null}
-      </ScrollView>
+          )}
+
+          <SectionHeader title="Add Log" />
+          <Select
+            label="Status"
+            value={logStatus}
+            onChange={(value) => setLogStatus(value as typeof logStatus)}
+            options={(['ok', 'warn', 'critical'] as const).map((status) => ({ value: status, label: status }))}
+          />
+          <TextField
+            label="Description"
+            placeholder="Description"
+            multiline
+            value={logDescription}
+            onChangeText={setLogDescription}
+            style={styles.multiline}
+          />
+          <TextField
+            label="Action taken"
+            placeholder="Action taken"
+            multiline
+            value={logAction}
+            onChangeText={setLogAction}
+            style={styles.multiline}
+          />
+          <Button label="Submit Log" onPress={() => void submitMaintenanceLog()} />
+        </Card>
+      ) : null}
 
       <Modal visible={scannerOpen} animationType="slide" onRequestClose={() => setScannerOpen(false)}>
         <View style={styles.scannerContainer}>
@@ -213,168 +205,20 @@ export const EquipmentScreen = () => {
               setScannerOpen(false)
             }}
           />
-          <View style={styles.scannerOverlay}>
-            <Text style={styles.scannerText}>Point camera at equipment barcode</Text>
-            <Pressable style={styles.closeScannerButton} onPress={() => setScannerOpen(false)}>
-              <Text style={styles.closeScannerText}>Close</Text>
-            </Pressable>
+          <View style={[styles.scannerOverlay, { backgroundColor: 'rgba(8, 23, 52, 0.68)' }]}>
+            <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>Point camera at equipment barcode</Text>
+            <Button label="Close" variant="ghost" onPress={() => setScannerOpen(false)} />
           </View>
         </View>
       </Modal>
-    </View>
+    </ScreenContainer>
   )
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  refreshButton: {
-    borderColor: '#0284C7',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    backgroundColor: '#E0F2FE',
-  },
-  refreshButtonText: {
-    color: '#0369A1',
-    fontWeight: '700',
-  },
-  searchRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  searchInput: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  scanButton: {
-    backgroundColor: '#0F766E',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    justifyContent: 'center',
-  },
-  scanButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  content: {
-    padding: 16,
-    gap: 10,
-    paddingBottom: 28,
-  },
-  card: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    padding: 12,
-    gap: 4,
-  },
-  cardActive: {
-    borderColor: '#0284C7',
-    backgroundColor: '#F0F9FF',
-  },
-  cardCode: {
-    color: '#0369A1',
-    fontWeight: '700',
-  },
-  cardTitle: {
-    color: '#0F172A',
-    fontWeight: '700',
-  },
-  cardStatus: {
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  logsContainer: {
-    marginTop: 10,
-    gap: 8,
-  },
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  logCard: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 10,
-    padding: 10,
-    backgroundColor: '#FFFFFF',
-    gap: 3,
-  },
-  logStatus: {
-    fontWeight: '800',
-  },
-  logText: {
-    color: '#0F172A',
-  },
-  logMeta: {
-    color: '#64748B',
-    fontSize: 12,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  statusChip: {
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  statusChipActive: {
-    borderColor: '#0E7490',
-    backgroundColor: '#CCFBF1',
-  },
-  statusChipText: {
-    color: '#475569',
-    textTransform: 'capitalize',
-  },
-  statusChipTextActive: {
-    color: '#115E59',
-    fontWeight: '700',
-  },
   multiline: {
-    minHeight: 70,
+    minHeight: 78,
     textAlignVertical: 'top',
-  },
-  submitButton: {
-    backgroundColor: '#0284C7',
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  submitButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  empty: {
-    color: '#64748B',
   },
   scannerContainer: {
     flex: 1,
@@ -386,22 +230,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     padding: 20,
-    backgroundColor: 'rgba(15, 23, 42, 0.72)',
     gap: 10,
     alignItems: 'center',
-  },
-  scannerText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  closeScannerButton: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  closeScannerText: {
-    color: '#0F172A',
-    fontWeight: '700',
   },
 })

@@ -2,14 +2,21 @@
 
 namespace App\Providers;
 
+use App\Models\Area;
+use App\Models\Building;
 use App\Models\CloseoutTemplate;
 use App\Models\Drawing;
 use App\Models\Equipment;
+use App\Models\Floor;
+use App\Models\HandoverWorkflow;
 use App\Models\InspectionRequest;
 use App\Models\InspectionSubmission;
 use App\Models\InspectionTemplate;
+use App\Models\Location;
 use App\Models\Project;
 use App\Models\Snag;
+use App\Models\SnagCategory;
+use App\Observers\AuditableModelObserver;
 use App\Policies\CloseoutTemplatePolicy;
 use App\Policies\DrawingPolicy;
 use App\Policies\EquipmentPolicy;
@@ -18,9 +25,12 @@ use App\Policies\InspectionSubmissionPolicy;
 use App\Policies\InspectionTemplatePolicy;
 use App\Policies\ProjectPolicy;
 use App\Policies\SnagPolicy;
+use Illuminate\Auth\Events\Authenticated;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -48,10 +58,31 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(InspectionRequest::class, InspectionRequestPolicy::class);
         Gate::policy(Equipment::class, EquipmentPolicy::class);
 
+        // Unified audit stream (item 9 / BR-BR-013): capture every master-data and
+        // workflow-config mutation regardless of the controller that made it.
+        foreach ([Area::class, Building::class, Floor::class, Location::class, SnagCategory::class, HandoverWorkflow::class] as $auditable) {
+            $auditable::observe(AuditableModelObserver::class);
+        }
+
+        // Enrich the shared log context with the authenticated user id as soon as a
+        // guard resolves the user (after the api-group middleware runs), so logs
+        // emitted by controllers/services carry user correlation. See AttachRequestContext.
+        Event::listen(Authenticated::class, function (Authenticated $event): void {
+            Log::withContext(['user_id' => $event->user->getAuthIdentifier()]);
+        });
+
         RateLimiter::for('api', function (Request $request): Limit {
             $key = $request->user()?->id ? 'user:'.$request->user()->id : 'ip:'.$request->ip();
 
             return Limit::perMinute(120)->by($key);
+        });
+
+        // Strict limiter for credential + OTP endpoints — blunts online brute force,
+        // credential stuffing and OTP-email flooding. Keyed by email + IP.
+        RateLimiter::for('auth', function (Request $request): Limit {
+            $email = mb_strtolower(trim((string) $request->input('email')));
+
+            return Limit::perMinute(8)->by(($email !== '' ? $email : 'anon').'|'.$request->ip());
         });
 
         RateLimiter::for('sync', function (Request $request): Limit {

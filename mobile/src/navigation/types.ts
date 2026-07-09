@@ -33,14 +33,38 @@ export type SnagsStackParamList = {
     width?: number
     height?: number
   }
+  InspectionsList: undefined
   InspectionDetail: {
     inspectionId?: number
   }
+  HandoverRequestsList: undefined
+  HandoverDetail: {
+    requestId: number
+  }
+  HandoverCreate: undefined
+  AuditTrail: undefined
+  MasterDataAdmin: undefined
+  RoleMatrix: undefined
+  Profile: undefined
+  SnagInspection: {
+    snagServerId: number
+    reference?: string
+    title?: string
+    status?: string
+    projectId?: number | null
+  }
+  Search: undefined
 }
 
 export type RootTabParamList = {
+  Home: undefined
   Snags: undefined
   Equipment: undefined
   Conflicts: undefined
+  Notifications: undefined
   Settings: undefined
+}
+
+export type RootDrawerParamList = {
+  MainTabs: undefined
 }

@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\OpsHealthEvent;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -14,4 +15,8 @@ Schedule::command('digests:send monthly')->monthlyOn(1, '08:30');
 Schedule::command('snags:escalate-overdue')->hourly();
 Schedule::command('snags:send-reminders')->hourlyAt(10);
 Schedule::command('inspections:generate-recurring')->hourlyAt(15);
+
+// Prune ops telemetry (api latency samples, storage/websocket failures) past the
+// 30-day retention defined on OpsHealthEvent::prunable() so the table stays bounded.
+Schedule::command('model:prune', ['--model' => [OpsHealthEvent::class]])->daily();
 

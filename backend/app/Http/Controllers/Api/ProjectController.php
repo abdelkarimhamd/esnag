@@ -23,6 +23,7 @@ class ProjectController extends Controller
         $organization = $this->currentOrganization($request);
         $user = $request->user();
         $perPage = min(100, max(5, $request->integer('per_page', 20)));
+        $sort = $request->string('sort')->toString();
 
         $canViewAll = $this->accessControlService->allowsWithoutDelegation($user, $organization->id, null, 'projects.view');
         $scopedProjectIds = $canViewAll
@@ -30,10 +31,16 @@ class ProjectController extends Controller
             : $this->accessControlService->projectIdsWithPermission($user, $organization->id, 'projects.view');
 
         if (! $canViewAll && $scopedProjectIds === []) {
-            abort(403);
+            $this->denyWithPermissions($request, ['projects.view'], 'You do not have permission to view projects.');
         }
 
         $query = Project::query()
+            ->select('projects.*')
+            ->selectRaw('COALESCE(
+                (SELECT MAX(snags.updated_at) FROM snags WHERE snags.project_id = projects.id),
+                (SELECT MAX(drawings.updated_at) FROM drawings WHERE drawings.project_id = projects.id),
+                projects.updated_at
+            ) as last_activity_at')
             ->where('organization_id', $organization->id)
             ->withCount(['drawings', 'snags']);
 
@@ -52,9 +59,14 @@ class ProjectController extends Controller
             $query->where('status', $status);
         }
 
-        $projects = $query
-            ->orderBy('name')
-            ->paginate($perPage);
+        if ($sort === 'recent_activity') {
+            $query->orderByDesc('last_activity_at')
+                ->orderBy('name');
+        } else {
+            $query->orderBy('name');
+        }
+
+        $projects = $query->paginate($perPage);
 
         return response()->json($projects);
     }

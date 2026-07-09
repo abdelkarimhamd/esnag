@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Services\AccessControlService;
+use App\Services\FeatureFlagService;
 use App\Services\MfaService;
 use App\Services\MobileDeviceSecurityService;
 use App\Services\OrganizationSecurityService;
@@ -17,6 +18,7 @@ class AuthController extends Controller
 {
     public function __construct(
         private readonly AccessControlService $accessControlService,
+        private readonly FeatureFlagService $featureFlagService,
         private readonly MfaService $mfaService,
         private readonly OrganizationSecurityService $organizationSecurityService,
         private readonly MobileDeviceSecurityService $mobileDeviceSecurityService,
@@ -64,7 +66,71 @@ class AuthController extends Controller
         }
         $request->session()->regenerate();
 
-        return response()->json($this->authPayload($request, $user));
+        return response()->json($this->webAuthPayload($request, $user));
+    }
+
+    /**
+     * Step 1 of email-OTP sign-in (item 15): validate credentials, then send a
+     * one-time code by email. Does NOT log the user in. The TOTP login above is
+     * untouched — this is an additive alternative second factor.
+     */
+    public function requestOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+        ]);
+
+        $user = User::query()->where('email', $validated['email'])->first();
+        if (! $user || ! Hash::check($validated['password'], $user->password)) {
+            return $this->invalidCredentialsResponse();
+        }
+
+        $challenge = $this->mfaService->issueOtp($user, 'email');
+
+        return response()->json([
+            'data' => [
+                'otp_sent' => true,
+                'channel' => $challenge->channel,
+                'destination' => $challenge->destination,
+                'expires_at' => optional($challenge->expires_at)->toIso8601String(),
+            ],
+        ]);
+    }
+
+    /**
+     * Step 2 of email-OTP sign-in: validate credentials + the emailed code, then
+     * establish the session (mirrors login()'s completion).
+     */
+    public function verifyOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+            'code' => ['required', 'string', 'max:12'],
+            'remember' => ['sometimes', 'boolean'],
+        ]);
+
+        $user = User::query()->where('email', $validated['email'])->first();
+        if (! $user || ! Hash::check($validated['password'], $user->password)) {
+            return $this->invalidCredentialsResponse();
+        }
+
+        if (! $this->mfaService->verifyOtp($user, $validated['code'])) {
+            return response()->json([
+                'message' => 'Invalid or expired verification code.',
+            ], 422);
+        }
+
+        Auth::login($user, (bool) ($validated['remember'] ?? false));
+        if (! $request->hasSession()) {
+            return response()->json([
+                'message' => 'Session store is unavailable for this login request. Configure SANCTUM_STATEFUL_DOMAINS and retry.',
+            ], 500);
+        }
+        $request->session()->regenerate();
+
+        return response()->json($this->webAuthPayload($request, $user));
     }
 
     public function mobileLogin(Request $request): JsonResponse
@@ -136,8 +202,103 @@ class AuthController extends Controller
         ]);
     }
 
+    /**
+     * Step 1 of email-OTP sign-in on mobile (item 15): validate credentials, then
+     * email a one-time code. The mobile flow is token-based, so verify issues a
+     * Sanctum token rather than a session — this is the token-issuing counterpart
+     * to requestOtp()/verifyOtp() above.
+     */
+    public function mobileRequestOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+        ]);
+
+        $user = User::query()->where('email', $validated['email'])->first();
+        if (! $user || ! Hash::check($validated['password'], $user->password)) {
+            return $this->invalidCredentialsResponse();
+        }
+
+        $challenge = $this->mfaService->issueOtp($user, 'email');
+
+        return response()->json([
+            'data' => [
+                'otp_sent' => true,
+                'channel' => $challenge->channel,
+                'destination' => $challenge->destination,
+                'expires_at' => optional($challenge->expires_at)->toIso8601String(),
+            ],
+        ]);
+    }
+
+    /**
+     * Step 2 of email-OTP sign-in on mobile: validate credentials + the emailed
+     * code, then mint a Sanctum token and register the device (mirrors mobileLogin).
+     */
+    public function mobileVerifyOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+            'code' => ['required', 'string', 'max:12'],
+            'device_name' => ['nullable', 'string', 'max:120'],
+            'device_id' => ['nullable', 'string', 'max:120'],
+            'platform' => ['nullable', 'string', 'max:40'],
+            'app_version' => ['nullable', 'string', 'max:80'],
+            'trust_device' => ['sometimes', 'boolean'],
+        ]);
+
+        $user = User::query()->where('email', $validated['email'])->first();
+        if (! $user || ! Hash::check($validated['password'], $user->password)) {
+            return $this->invalidCredentialsResponse();
+        }
+
+        if (! $this->mfaService->verifyOtp($user, $validated['code'])) {
+            return response()->json([
+                'message' => 'Invalid or expired verification code.',
+            ], 422);
+        }
+
+        $deviceName = $validated['device_name'] ?? sprintf('mobile-%s', now()->format('YmdHis'));
+        $deviceId = trim((string) ($validated['device_id'] ?? ''));
+        if ($deviceId === '') {
+            $deviceId = substr(hash('sha256', $deviceName.'|'.$request->ip().'|'.$request->userAgent()), 0, 64);
+        }
+
+        $token = $user->createToken($deviceName, ['*']);
+
+        $trustDays = $this->organizationSecurityService->mobileTrustDaysForUser($user);
+        $this->mobileDeviceSecurityService->registerLoginDevice(
+            $user,
+            $deviceId,
+            $deviceName,
+            $validated['platform'] ?? 'mobile',
+            $validated['app_version'] ?? null,
+            (bool) ($validated['trust_device'] ?? false),
+            $trustDays,
+            $token->accessToken->id,
+            $request,
+        );
+
+        return response()->json([
+            ...$this->authPayload($request, $user),
+            'token' => $token->plainTextToken,
+            'token_type' => 'Bearer',
+            'device_id' => $deviceId,
+            'mfa_verified' => true,
+        ]);
+    }
+
     public function logout(Request $request): JsonResponse
     {
+        // Revoke the bearer token issued by webAuthPayload when the request is
+        // token-authenticated (the session may already be gone/clobbered).
+        $current = $request->user()?->currentAccessToken();
+        if ($current instanceof \Laravel\Sanctum\PersonalAccessToken) {
+            $current->delete();
+        }
+
         Auth::guard('web')->logout();
 
         if ($request->hasSession()) {
@@ -232,6 +393,24 @@ class AuthController extends Controller
     /**
      * @return array<string, mixed>
      */
+    /**
+     * Web session payload plus a bearer token. The SPA stores the token and sends
+     * it as `Authorization: Bearer` so authentication survives a full page reload
+     * even when the cookie session is dropped or clobbered — a known fragility of
+     * cross-middleware-group SPA sessions behind the dev proxy (a `web`-group request
+     * such as /sanctum/csrf-cookie or /broadcasting/auth can mint a competing guest
+     * session that overwrites the authenticated cookie). Sanctum resolves the session
+     * guard first and falls back to this token when the session has no user. The
+     * cookie session is retained so CSRF on state-changing requests keeps working.
+     */
+    private function webAuthPayload(Request $request, User $user): array
+    {
+        $payload = $this->authPayload($request, $user);
+        $payload['token'] = $user->createToken('web', ['*'])->plainTextToken;
+
+        return $payload;
+    }
+
     private function authPayload(Request $request, ?User $explicitUser = null): array
     {
         /** @var User $user */
@@ -249,6 +428,7 @@ class AuthController extends Controller
                     'roles' => $user->roleNamesForOrganization($organization->id),
                     'permissions' => $user->permissionNamesForProject($organization->id),
                     'project_permissions' => $this->accessControlService->projectScopedPermissionNames($user, $organization->id),
+                    'feature_flags' => $this->featureFlagService->resolvedFlags($organization->id),
                 ];
             })
             ->values();

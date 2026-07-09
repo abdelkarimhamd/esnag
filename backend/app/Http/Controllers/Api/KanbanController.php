@@ -10,6 +10,7 @@ use App\Services\AccessControlService;
 use App\Support\SnagWorkflow;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 
 class KanbanController extends Controller
 {
@@ -25,13 +26,18 @@ class KanbanController extends Controller
         $organization = $this->currentOrganization($request);
         $user = $request->user();
         $requestedProjectId = $request->integer('project_id') ?: null;
+        $scope = $request->string('scope')->toString() === 'mine' ? 'mine' : 'all';
+        $dueWindow = $request->string('due_window')->toString();
+        if (! in_array($dueWindow, ['all', 'overdue', '7d'], true)) {
+            $dueWindow = 'all';
+        }
 
         if ($requestedProjectId !== null) {
             if (
                 ! $this->accessControlService->allows($user, $organization->id, $requestedProjectId, 'kanban.view')
                 || ! $this->accessControlService->allows($user, $organization->id, $requestedProjectId, 'snags.view')
             ) {
-                abort(403);
+                $this->denyWithPermissions($request, ['kanban.view', 'snags.view'], 'You do not have permission to view the board for this project.');
             }
         } elseif (
             ! $this->accessControlService->allowsWithoutDelegation($user, $organization->id, null, 'kanban.view')
@@ -42,7 +48,7 @@ class KanbanController extends Controller
             $allowedProjectIds = array_values(array_intersect($kanbanProjects, $snagProjects));
 
             if ($allowedProjectIds === []) {
-                abort(403);
+                $this->denyWithPermissions($request, ['kanban.view', 'snags.view'], 'You do not have permission to view any board in this organization.');
             }
 
             $request->merge(['_allowed_project_ids' => $allowedProjectIds]);
@@ -73,6 +79,22 @@ class KanbanController extends Controller
             $query->where('assigned_to', $assignedTo);
         }
 
+        if ($scope === 'mine') {
+            $query->where('assigned_to', $user->id);
+        }
+
+        if ($dueWindow === 'overdue') {
+            $query->whereNotNull('due_date')
+                ->whereDate('due_date', '<', Carbon::today())
+                ->whereNotIn('status', [SnagStatus::Closed->value, SnagStatus::Rejected->value]);
+        }
+
+        if ($dueWindow === '7d') {
+            $query->whereNotNull('due_date')
+                ->whereBetween('due_date', [Carbon::today(), Carbon::today()->copy()->addDays(7)->endOfDay()])
+                ->whereNotIn('status', [SnagStatus::Closed->value, SnagStatus::Rejected->value]);
+        }
+
         if ($search = $request->string('search')->toString()) {
             $query->where(function ($builder) use ($search): void {
                 $builder->where('reference', 'like', "%{$search}%")
@@ -99,6 +121,11 @@ class KanbanController extends Controller
             'data' => [
                 'columns' => $columns,
                 'workflow' => SnagWorkflow::transitions(),
+                'filters' => [
+                    'scope' => $scope,
+                    'due_window' => $dueWindow,
+                    'project_id' => $requestedProjectId,
+                ],
             ],
         ]);
     }

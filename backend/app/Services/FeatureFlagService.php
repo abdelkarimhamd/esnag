@@ -14,6 +14,11 @@ class FeatureFlagService
     public function catalog(): array
     {
         return [
+            'ui.simple_first_v1' => [
+                'label' => 'Simple-First UI',
+                'description' => 'Guided task-first navigation for the core snag flow with advanced tools collapsed by default.',
+                'default_enabled' => true,
+            ],
             'drawings' => [
                 'label' => 'Drawings',
                 'description' => 'Drawing viewer, revisions, pin migration, and location suggestions.',
@@ -108,6 +113,43 @@ class FeatureFlagService
         }
 
         return $resolved;
+    }
+
+    /**
+     * Resolve org-scoped flags for many organizations in a single query.
+     *
+     * @param  array<int, int>  $organizationIds
+     * @return array<int, array<string, bool>>  keyed by organization id
+     */
+    public function resolvedFlagsForOrganizations(array $organizationIds): array
+    {
+        $organizationIds = array_values(array_unique(array_filter($organizationIds)));
+
+        if ($organizationIds === []) {
+            return [];
+        }
+
+        $default = $this->defaultMap();
+
+        $overrides = OrganizationFeatureFlag::query()
+            ->whereIn('organization_id', $organizationIds)
+            ->whereNull('project_id')
+            ->whereIn('feature_key', $this->keys())
+            ->get()
+            ->groupBy('organization_id');
+
+        $result = [];
+        foreach ($organizationIds as $organizationId) {
+            $resolved = $default;
+
+            foreach ($overrides->get($organizationId, collect()) as $row) {
+                $resolved[$row->feature_key] = (bool) $row->is_enabled;
+            }
+
+            $result[$organizationId] = $resolved;
+        }
+
+        return $result;
     }
 
     public function isEnabled(int $organizationId, ?int $projectId, string $featureKey): bool
