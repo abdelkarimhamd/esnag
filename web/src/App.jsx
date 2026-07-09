@@ -9,7 +9,8 @@ import { DashboardPage } from './pages/DashboardPage';
 import { AppLayout } from './layout/AppLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { PermissionRoute } from './components/PermissionRoute';
-import { DefaultLandingRedirect } from './components/DefaultLandingRedirect';
+import { HomePage } from './pages/HomePage';
+import { SearchResultsPage } from './pages/SearchResultsPage';
 import { RouteErrorBoundary } from './components/RouteErrorBoundary';
 import { FEATURE_ACCESS } from './utils/permissions';
 const ExportCenterPage = lazy(() => import('./pages/ExportCenterPage').then((module) => ({ default: module.ExportCenterPage })));
@@ -23,6 +24,13 @@ const NotificationPreferencesPage = lazy(() => import('./pages/NotificationPrefe
 const AccessControlPage = lazy(() => import('./pages/AccessControlPage').then((module) => ({ default: module.AccessControlPage })));
 const WorkflowAutomationPage = lazy(() => import('./pages/WorkflowAutomationPage').then((module) => ({ default: module.WorkflowAutomationPage })));
 const OpsAdminPage = lazy(() => import('./pages/OpsAdminPage').then((module) => ({ default: module.OpsAdminPage })));
+const PunchListsPage = lazy(() => import('./pages/PunchListsPage').then((module) => ({ default: module.PunchListsPage })));
+const CommissioningPage = lazy(() => import('./pages/CommissioningPage').then((module) => ({ default: module.CommissioningPage })));
+const HandoverPage = lazy(() => import('./pages/HandoverPage').then((module) => ({ default: module.HandoverPage })));
+const MasterDataPage = lazy(() => import('./pages/MasterDataPage').then((module) => ({ default: module.MasterDataPage })));
+const HandoverRequestsPage = lazy(() => import('./pages/HandoverRequestsPage').then((module) => ({ default: module.HandoverRequestsPage })));
+const WorkflowConfigPage = lazy(() => import('./pages/WorkflowConfigPage').then((module) => ({ default: module.WorkflowConfigPage })));
+const AuditTrailPage = lazy(() => import('./pages/AuditTrailPage').then((module) => ({ default: module.AuditTrailPage })));
 const LazyPageFallback = <div style={{ padding: 16 }}>Loading module...</div>;
 function App() {
     return (<Router>
@@ -34,7 +42,9 @@ function App() {
                 <AppLayout />
               </RouteErrorBoundary>
             </ProtectedRoute>}>
-          <Route index element={<DefaultLandingRedirect />}/>
+          <Route index element={<Navigate to="/home" replace/>}/>
+          <Route path="home" element={<HomePage />}/>
+          <Route path="search" element={<SearchResultsPage />}/>
           <Route path="projects" element={<PermissionRoute requiredAny={FEATURE_ACCESS.projects.anyOf}>
                 <ProjectsPage />
               </PermissionRoute>}/>
@@ -60,6 +70,21 @@ function App() {
                   <EquipmentPage />
                 </Suspense>
               </PermissionRoute>}/>
+          <Route path="commissioning" element={<PermissionRoute requiredAny={FEATURE_ACCESS.commissioning.anyOf}>
+                <Suspense fallback={LazyPageFallback}>
+                  <CommissioningPage />
+                </Suspense>
+              </PermissionRoute>}/>
+          <Route path="punch-lists" element={<PermissionRoute requiredAny={FEATURE_ACCESS.punchLists.anyOf}>
+                <Suspense fallback={LazyPageFallback}>
+                  <PunchListsPage />
+                </Suspense>
+              </PermissionRoute>}/>
+          <Route path="handover" element={<PermissionRoute requiredAny={FEATURE_ACCESS.handover.anyOf}>
+                <Suspense fallback={LazyPageFallback}>
+                  <HandoverPage />
+                </Suspense>
+              </PermissionRoute>}/>
           <Route path="access-control" element={<PermissionRoute requiredAny={FEATURE_ACCESS.accessControl.anyOf}>
                 <Suspense fallback={LazyPageFallback}>
                   <AccessControlPage />
@@ -73,6 +98,26 @@ function App() {
           <Route path="ops" element={<PermissionRoute requiredAny={FEATURE_ACCESS.ops.anyOf}>
                 <Suspense fallback={LazyPageFallback}>
                   <OpsAdminPage />
+                </Suspense>
+              </PermissionRoute>}/>
+          <Route path="master-data" element={<PermissionRoute requiredAny={FEATURE_ACCESS.masterData.anyOf}>
+                <Suspense fallback={LazyPageFallback}>
+                  <MasterDataPage />
+                </Suspense>
+              </PermissionRoute>}/>
+          <Route path="handovers" element={<PermissionRoute requiredAny={FEATURE_ACCESS.handoverRequests.anyOf}>
+                <Suspense fallback={LazyPageFallback}>
+                  <HandoverRequestsPage />
+                </Suspense>
+              </PermissionRoute>}/>
+          <Route path="handovers/workflow" element={<PermissionRoute requiredAny={FEATURE_ACCESS.workflowConfig.anyOf}>
+                <Suspense fallback={LazyPageFallback}>
+                  <WorkflowConfigPage />
+                </Suspense>
+              </PermissionRoute>}/>
+          <Route path="audit" element={<PermissionRoute requiredAny={FEATURE_ACCESS.auditTrail.anyOf}>
+                <Suspense fallback={LazyPageFallback}>
+                  <AuditTrailPage />
                 </Suspense>
               </PermissionRoute>}/>
           <Route path="preferences/notifications" element={<PermissionRoute requiredAny={FEATURE_ACCESS.notificationPreferences.anyOf}>

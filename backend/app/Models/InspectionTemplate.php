@@ -21,6 +21,7 @@ class InspectionTemplate extends Model
         'discipline',
         'description',
         'schema',
+        'observation_fields',
         'approval_workflow',
         'is_active',
         'is_library',
@@ -33,6 +34,7 @@ class InspectionTemplate extends Model
     {
         return [
             'schema' => 'array',
+            'observation_fields' => 'array',
             'approval_workflow' => 'array',
             'is_active' => 'boolean',
             'is_library' => 'boolean',

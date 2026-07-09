@@ -18,10 +18,17 @@ export const FEATURE_ACCESS = {
         ],
     },
     templates: { anyOf: ['inspections.templates.view', 'closeout.templates.view', 'projects.view'] },
+    punchLists: { anyOf: ['punch_lists.view'] },
+    commissioning: { anyOf: ['commissioning.view'] },
+    handover: { anyOf: ['toc.view'] },
     inspectionsSubmissions: { anyOf: ['inspections.submissions.view'] },
     inspectionsRequests: { anyOf: ['inspections.requests.view'] },
     inspectionsReports: { anyOf: ['inspections.reports.view'] },
     notificationPreferences: { anyOf: ['notification.preferences.manage'] },
+    masterData: { anyOf: ['projects.view'] },
+    handoverRequests: { anyOf: ['handover.view'] },
+    workflowConfig: { anyOf: ['workflow.configure'] },
+    auditTrail: { anyOf: ['audit.view'] },
 };
 export const hasAnyPermission = (granted, required) => required.some((permissionName) => granted.includes(permissionName));
 export const canAccessFeature = (granted, key) => hasAnyPermission(granted, FEATURE_ACCESS[key].anyOf);

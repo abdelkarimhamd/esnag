@@ -2,14 +2,21 @@
 
 namespace App\Providers;
 
+use App\Models\Area;
+use App\Models\Building;
 use App\Models\CloseoutTemplate;
 use App\Models\Drawing;
 use App\Models\Equipment;
+use App\Models\Floor;
+use App\Models\HandoverWorkflow;
 use App\Models\InspectionRequest;
 use App\Models\InspectionSubmission;
 use App\Models\InspectionTemplate;
+use App\Models\Location;
 use App\Models\Project;
 use App\Models\Snag;
+use App\Models\SnagCategory;
+use App\Observers\AuditableModelObserver;
 use App\Policies\CloseoutTemplatePolicy;
 use App\Policies\DrawingPolicy;
 use App\Policies\EquipmentPolicy;
@@ -50,6 +57,12 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(InspectionSubmission::class, InspectionSubmissionPolicy::class);
         Gate::policy(InspectionRequest::class, InspectionRequestPolicy::class);
         Gate::policy(Equipment::class, EquipmentPolicy::class);
+
+        // Unified audit stream (item 9 / BR-BR-013): capture every master-data and
+        // workflow-config mutation regardless of the controller that made it.
+        foreach ([Area::class, Building::class, Floor::class, Location::class, SnagCategory::class, HandoverWorkflow::class] as $auditable) {
+            $auditable::observe(AuditableModelObserver::class);
+        }
 
         // Enrich the shared log context with the authenticated user id as soon as a
         // guard resolves the user (after the api-group middleware runs), so logs

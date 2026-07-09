@@ -4,6 +4,7 @@ namespace App\Notifications\Concerns;
 
 use App\Models\NotificationPreference;
 use App\Models\User;
+use App\Notifications\Channels\SmsChannel;
 
 trait ResolvesNotificationChannels
 {
@@ -35,6 +36,15 @@ trait ResolvesNotificationChannels
 
         if ($preference?->email_enabled ?? true) {
             $channels[] = 'mail';
+        }
+
+        // SMS is opt-in per user (default off), requires a phone number, and is
+        // only attempted when a gateway is configured (OD-14). Email above remains
+        // the guaranteed fallback. Only notifications with toSms() actually send.
+        if (($preference?->sms_enabled ?? false)
+            && ! empty($notifiable->phone)
+            && (bool) config('sms.enabled', false)) {
+            $channels[] = SmsChannel::class;
         }
 
         return $channels;

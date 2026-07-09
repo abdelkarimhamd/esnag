@@ -9,6 +9,7 @@ use App\Models\Project;
 use App\Models\ProjectUserRole;
 use App\Models\User;
 use App\Services\AccessControlService;
+use App\Services\AuditRecorder;
 use App\Support\PermissionCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,6 +23,7 @@ class RbacController extends Controller
 
     public function __construct(
         private readonly AccessControlService $accessControlService,
+        private readonly AuditRecorder $auditRecorder,
     ) {
     }
 
@@ -159,6 +161,14 @@ class RbacController extends Controller
 
         $roles = collect($validated['roles'] ?? [])->unique()->values();
 
+        $priorRoles = ProjectUserRole::query()
+            ->where('organization_id', $organization->id)
+            ->where('project_id', $project->id)
+            ->where('user_id', $user->id)
+            ->orderBy('role_name')
+            ->pluck('role_name')
+            ->all();
+
         DB::transaction(function () use ($organization, $project, $user, $roles): void {
             ProjectUserRole::query()
                 ->where('organization_id', $organization->id)
@@ -178,6 +188,19 @@ class RbacController extends Controller
 
             Cache::forget(sprintf('rbac:project_permissions:%d:%d:%d', $organization->id, $project->id, $user->id));
         });
+
+        // Item 9 / BR-BR-013: audit who changed which project roles for which member.
+        $this->auditRecorder->record(
+            $organization->id,
+            $request->user(),
+            'rbac.project_roles_updated',
+            $user,
+            $project->id,
+            ['roles' => $priorRoles],
+            ['roles' => $roles->values()->all()],
+            null,
+            ['target_user_id' => $user->id],
+        );
 
         return response()->json([
             'data' => [

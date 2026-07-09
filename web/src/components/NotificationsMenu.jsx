@@ -1,9 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Box, IconButton, List, ListItem, ListItemText, Menu, MenuItem, Typography } from '@mui/material';
 import NotificationsOutlinedIcon from '@mui/icons-material/NotificationsOutlined';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { subscribeOrganizationChannel } from '../realtime/echo';
+
+// event → human label for handover-stage notifications.
+const HANDOVER_EVENT_LABELS = {
+    submitted: 'submitted for review',
+    forwarded: 'forwarded to you',
+    returned: 'returned',
+    rejected: 'rejected',
+    revised: 'revision requested',
+    approved: 'approved',
+    assigned: 'assigned to you',
+    closed: 'closed',
+    cancelled: 'cancelled',
+    commented: 'new comment',
+    escalated: 'overdue',
+};
 const notificationText = (notification) => {
     const category = String(notification.data.type ?? notification.type);
     if (category === 'snag_assigned') {
@@ -66,6 +82,13 @@ const notificationText = (notification) => {
             secondary: `Step result: ${String(notification.data.approval_status ?? 'updated')}`,
         };
     }
+    if (category === 'handover_stage') {
+        const handoverEvent = String(notification.data.event ?? 'updated');
+        return {
+            primary: `Handover ${HANDOVER_EVENT_LABELS[handoverEvent] ?? handoverEvent}: ${String(notification.data.reference ?? '')}`,
+            secondary: String(notification.data.reason ?? notification.data.title ?? 'A handover request needs your attention.'),
+        };
+    }
     return {
         primary: category,
         secondary: 'Update',
@@ -73,6 +96,7 @@ const notificationText = (notification) => {
 };
 export const NotificationsMenu = ({ canView }) => {
     const { activeOrganization } = useAuth();
+    const navigate = useNavigate();
     const activeOrganizationId = activeOrganization?.id ?? null;
     const [anchorEl, setAnchorEl] = useState(null);
     const [notifications, setNotifications] = useState([]);
@@ -161,6 +185,11 @@ export const NotificationsMenu = ({ canView }) => {
                 }} onClick={() => {
                     if (!notification.read_at) {
                         void markRead(notification.id);
+                    }
+                    const category = String(notification.data.type ?? notification.type);
+                    if (category === 'handover_stage') {
+                        closeMenu();
+                        navigate('/handovers');
                     }
                 }}>
                   <ListItemText primary={text.primary} secondary={text.secondary}/>

@@ -283,6 +283,100 @@ class DrawingIntelligenceTest extends TestCase
             ->assertStatus(404);
     }
 
+    public function test_drawing_links_to_an_area_and_derives_it_from_the_building(): void
+    {
+        [$organization, $owner] = $this->createOrganizationWithRole('owner');
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $area = \App\Models\Area::factory()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id,
+        ]);
+        $building = Building::factory()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id, 'area_id' => $area->id,
+        ]);
+
+        Sanctum::actingAs($owner);
+        $drawing = $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->postJson("/api/projects/{$project->id}/drawings", [
+                'title' => 'Level 2 GA', 'code' => 'A-201', 'building_id' => $building->id,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.area_id', $area->id)
+            ->json('data');
+
+        $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->getJson("/api/drawings?area_id={$area->id}")
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $drawing['id']);
+    }
+
+    public function test_last_drawing_of_a_building_cannot_be_deleted(): void
+    {
+        [$organization] = $this->createOrganizationWithRole('owner');
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $building = Building::factory()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id,
+        ]);
+
+        $only = Drawing::factory()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id, 'building_id' => $building->id,
+        ]);
+
+        try {
+            $only->delete();
+            $this->fail('A building must retain at least one drawing.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('at least one drawing', $exception->getMessage());
+        }
+        $this->assertDatabaseHas('drawings', ['id' => $only->id]);
+
+        // With a second drawing present, one may be deleted.
+        $second = Drawing::factory()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id, 'building_id' => $building->id,
+        ]);
+        $second->delete();
+        $this->assertDatabaseMissing('drawings', ['id' => $second->id]);
+        $this->assertDatabaseHas('drawings', ['id' => $only->id]);
+    }
+
+    public function test_aggregate_returns_building_snags_with_severity_summary(): void
+    {
+        [$organization, $owner] = $this->createOrganizationWithRole('owner');
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $building = Building::factory()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id,
+        ]);
+
+        $drawingA = Drawing::factory()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id, 'building_id' => $building->id,
+        ]);
+        $drawingB = Drawing::factory()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id, 'building_id' => $building->id,
+        ]);
+
+        foreach ([[$drawingA, 'major'], [$drawingA, 'high'], [$drawingB, 'medium']] as [$drawing, $severity]) {
+            Snag::factory()->create([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'drawing_id' => $drawing->id,
+                'building_id' => $building->id,
+                'severity' => $severity,
+                'pin_x' => 0.4,
+                'pin_y' => 0.5,
+            ]);
+        }
+
+        Sanctum::actingAs($owner);
+        $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->getJson("/api/drawings/aggregate?building_id={$building->id}")
+            ->assertOk()
+            ->assertJsonPath('data.summary.total', 3)
+            ->assertJsonPath('data.summary.by_severity.major', 1)
+            ->assertJsonPath('data.summary.by_severity.high', 1)
+            ->assertJsonPath('data.summary.by_severity.medium', 1)
+            ->assertJsonCount(3, 'data.snags')
+            ->assertJsonCount(2, 'data.drawings');
+    }
+
     /**
      * @return array{0: Organization, 1: User}
      */

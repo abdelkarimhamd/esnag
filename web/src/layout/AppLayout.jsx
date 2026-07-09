@@ -1,337 +1,418 @@
-import { AppBar, Avatar, Box, Button, Chip, Collapse, Container, Divider, Drawer, FormControl, IconButton, InputLabel, List, ListItemButton, ListItemIcon, ListItemText, MenuItem, Select, Stack, Toolbar, Tooltip, Typography, } from '@mui/material';
-import DashboardRoundedIcon from '@mui/icons-material/DashboardRounded';
-import AssignmentRoundedIcon from '@mui/icons-material/AssignmentRounded';
-import ConstructionRoundedIcon from '@mui/icons-material/ConstructionRounded';
-import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded';
-import ApartmentRoundedIcon from '@mui/icons-material/ApartmentRounded';
-import SettingsSuggestRoundedIcon from '@mui/icons-material/SettingsSuggestRounded';
-import ShieldRoundedIcon from '@mui/icons-material/ShieldRounded';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Avatar, Box, Button, Divider, ListItemIcon, Menu, MenuItem, Tooltip, Typography } from '@mui/material';
+import HomeRoundedIcon from '@mui/icons-material/HomeRounded';
 import ViewKanbanRoundedIcon from '@mui/icons-material/ViewKanbanRounded';
-import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
-import NotificationsActiveRoundedIcon from '@mui/icons-material/NotificationsActiveRounded';
-import AnalyticsRoundedIcon from '@mui/icons-material/AnalyticsRounded';
+import LayersRoundedIcon from '@mui/icons-material/LayersRounded';
+import ViewInArRoundedIcon from '@mui/icons-material/ViewInArRounded';
+import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded';
 import AssignmentTurnedInRoundedIcon from '@mui/icons-material/AssignmentTurnedInRounded';
-import RouteRoundedIcon from '@mui/icons-material/RouteRounded';
-import MenuRoundedIcon from '@mui/icons-material/MenuRounded';
-import ExpandLessRoundedIcon from '@mui/icons-material/ExpandLessRounded';
-import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
+import PlaylistAddCheckRoundedIcon from '@mui/icons-material/PlaylistAddCheckRounded';
+import HandshakeRoundedIcon from '@mui/icons-material/HandshakeRounded';
+import AccountTreeRoundedIcon from '@mui/icons-material/AccountTreeRounded';
+import BarChartRoundedIcon from '@mui/icons-material/BarChartRounded';
+import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded';
+import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
+import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
+import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
+import TranslateRoundedIcon from '@mui/icons-material/TranslateRounded';
+import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
+import ApartmentRoundedIcon from '@mui/icons-material/ApartmentRounded';
 import { Link as RouterLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useLocalization } from '../hooks/useLocalization';
 import { NotificationsMenu } from '../components/NotificationsMenu';
-import { BrandLogo } from '../components/BrandLogo';
 import { canAccessFeature } from '../utils/permissions';
-const drawerWidth = 286;
-const getStoredUiMode = () => {
-    if (typeof window === 'undefined') {
-        return 'simple';
-    }
-    return window.localStorage.getItem('esnagging.ui.mode') === 'advanced' ? 'advanced' : 'simple';
-};
-const PRIMARY_NAV_ITEMS = [
-    { feature: 'projects', to: '/projects', labelKey: 'nav.projects', icon: <ApartmentRoundedIcon fontSize="small"/>, id: 'projects-nav' },
-    { feature: 'board', to: '/board', labelKey: 'nav.board', icon: <ViewKanbanRoundedIcon fontSize="small"/> },
-    { feature: 'dashboard', to: '/dashboard', labelKey: 'nav.dashboard', icon: <AnalyticsRoundedIcon fontSize="small"/> },
-    { feature: 'notificationPreferences', to: '/preferences/notifications', labelKey: 'nav.alerts', icon: <NotificationsActiveRoundedIcon fontSize="small"/> },
+import { BRAND, FONT_MONO } from '../theme';
+
+const RAIL_WIDTH = 76;
+
+// Flat navigation — one rail, no simple/advanced modes, no nested drawers.
+// Each item is gated by a feature permission (Home is always available). The
+// `id` on Drawings preserves the onboarding tour anchor (#projects-nav).
+const RAIL_ITEMS = [
+  { key: 'home', to: '/home', labelKey: 'nav.home', fallback: 'Home', icon: HomeRoundedIcon },
+  { key: 'board', to: '/board', feature: 'board', labelKey: 'nav.board', fallback: 'Board', icon: ViewKanbanRoundedIcon },
+  { key: 'drawings', to: '/projects', feature: 'projects', labelKey: 'nav.drawings', fallback: 'Drawings', icon: LayersRoundedIcon, id: 'projects-nav' },
+  { key: 'equipment', to: '/equipment', feature: 'equipment', labelKey: 'nav.equipment', fallback: 'Equipment', icon: ViewInArRoundedIcon },
+  { key: 'inspect', to: '/inspections/submissions', feature: 'inspectionsSubmissions', labelKey: 'nav.inspect', fallback: 'Inspect', icon: FactCheckRoundedIcon },
+  { key: 'commissioning', to: '/commissioning', feature: 'commissioning', labelKey: 'nav.commissioning', fallback: 'T&C', icon: AssignmentTurnedInRoundedIcon },
+  { key: 'handovers', to: '/handovers', feature: 'handoverRequests', labelKey: 'nav.handovers', fallback: 'Handovers', icon: AccountTreeRoundedIcon },
+  { key: 'handover', to: '/handover', feature: 'handover', labelKey: 'nav.handover', fallback: 'Certificates', icon: HandshakeRoundedIcon },
+  { key: 'punchLists', to: '/punch-lists', feature: 'punchLists', labelKey: 'nav.punchLists', fallback: 'Punch lists', icon: PlaylistAddCheckRoundedIcon },
+  { key: 'analytics', to: '/dashboard', feature: 'dashboard', labelKey: 'nav.analytics', fallback: 'Analytics', icon: BarChartRoundedIcon },
+  { key: 'reports', to: '/exports', feature: 'exports', labelKey: 'nav.reports', fallback: 'Reports', icon: DescriptionRoundedIcon },
 ];
-const WORKSPACE_MORE_ITEMS = [
-    { feature: 'inspectionsSubmissions', to: '/inspections/submissions', labelKey: 'nav.inspections', icon: <AssignmentTurnedInRoundedIcon fontSize="small"/> },
-    { feature: 'exports', to: '/exports', labelKey: 'nav.exports', icon: <DescriptionRoundedIcon fontSize="small"/> },
-    { feature: 'templates', to: '/templates', labelKey: 'nav.templates', icon: <AssignmentRoundedIcon fontSize="small"/> },
-    { feature: 'inspectionsRequests', to: '/inspections/requests', labelKey: 'nav.requests', icon: <RouteRoundedIcon fontSize="small"/> },
-    { feature: 'inspectionsReports', to: '/inspections/reports', labelKey: 'nav.reports', icon: <DashboardRoundedIcon fontSize="small"/> },
-    { feature: 'equipment', to: '/equipment', labelKey: 'nav.equipment', icon: <ConstructionRoundedIcon fontSize="small"/> },
+
+// Settings / admin surfaces reached from the account menu and the rail gear.
+const SETTINGS_ITEMS = [
+  { to: '/access-control', feature: 'accessControl', label: 'Team & access' },
+  { to: '/master-data', feature: 'masterData', label: 'Location & categories' },
+  { to: '/handovers/workflow', feature: 'workflowConfig', label: 'Handover workflow' },
+  { to: '/audit', feature: 'auditTrail', label: 'Audit trail' },
+  { to: '/automation', feature: 'automation', label: 'Automation' },
+  { to: '/templates', feature: 'templates', label: 'Templates' },
+  { to: '/inspections/requests', feature: 'inspectionsRequests', label: 'Inspection requests' },
+  { to: '/inspections/reports', feature: 'inspectionsReports', label: 'Inspection reports' },
+  { to: '/preferences/notifications', feature: 'notificationPreferences', label: 'Notifications' },
+  { to: '/ops', feature: 'ops', label: 'Organization & health' },
 ];
-const ADMIN_NAV_ITEMS = [
-    {
-        feature: 'accessControl',
-        to: '/access-control',
-        labelKey: 'nav.access',
-        icon: <ShieldRoundedIcon fontSize="small"/>,
-        allowedRoles: ['org_admin', 'owner', 'project_manager'],
-    },
-    {
-        feature: 'automation',
-        to: '/automation',
-        labelKey: 'nav.automation',
-        icon: <SettingsSuggestRoundedIcon fontSize="small"/>,
-        allowedRoles: ['org_admin', 'owner', 'project_manager', 'consultant'],
-    },
-    {
-        feature: 'ops',
-        to: '/ops',
-        labelKey: 'nav.ops',
-        icon: <TuneRoundedIcon fontSize="small"/>,
-        allowedRoles: ['org_admin', 'owner'],
-    },
-];
+
+// The three-square brand mark shown at the top of the rail.
+const BrandMark = () => (
+  <Box component="svg" width="30" height="30" viewBox="0 0 34 34" fill="none" sx={{ mb: 2, flex: 'none' }} aria-hidden>
+    <rect x="1" y="1" width="14.5" height="14.5" rx="3.2" fill={BRAND.green} />
+    <rect x="18.5" y="1" width="14.5" height="14.5" rx="3.2" fill={BRAND.navy} />
+    <rect x="1" y="18.5" width="14.5" height="14.5" rx="3.2" fill={BRAND.teal} />
+  </Box>
+);
+
 export const AppLayout = () => {
-    const location = useLocation();
-    const navigate = useNavigate();
-    const { organizations, activeOrganization, selectOrganization, logout, permissions, activeRoleNames, user } = useAuth();
-    const { locale, setLocale, t, direction } = useLocalization();
-    const [mobileOpen, setMobileOpen] = useState(false);
-    const [uiMode, setUiMode] = useState(() => getStoredUiMode());
-    const [workspaceMoreOpen, setWorkspaceMoreOpen] = useState(false);
-    const [adminOpen, setAdminOpen] = useState(false);
-    const can = (feature) => canAccessFeature(permissions, feature);
-    const hasRoleAccess = (allowedRoles) => {
-        if (!Array.isArray(allowedRoles) || allowedRoles.length === 0) {
-            return true;
-        }
-        if (!Array.isArray(activeRoleNames) || activeRoleNames.length === 0) {
-            return true;
-        }
-        return activeRoleNames.some((roleName) => allowedRoles.includes(roleName));
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { organizations, activeOrganization, selectOrganization, logout, permissions, user } = useAuth();
+  const { locale, setLocale, t, direction } = useLocalization();
+  const [accountEl, setAccountEl] = useState(null);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef(null);
+
+  const can = (feature) => (feature ? canAccessFeature(permissions, feature) : true);
+  const resolveLabel = (item) => {
+    const translated = t(item.labelKey);
+    return translated && translated !== item.labelKey ? translated : item.fallback;
+  };
+
+  const railItems = useMemo(
+    () => RAIL_ITEMS.filter((item) => can(item.feature)).map((item) => ({ ...item, label: resolveLabel(item) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [permissions, locale],
+  );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const settingsItems = useMemo(() => SETTINGS_ITEMS.filter((item) => can(item.feature)), [permissions]);
+  const settingsTarget = settingsItems[0]?.to ?? null;
+
+  const isSelected = (to) => {
+    if (to === '/home') return location.pathname === '/home' || location.pathname === '/';
+    if (to === '/projects') return location.pathname.startsWith('/projects');
+    if (to === '/templates') return location.pathname.startsWith('/templates') || location.pathname.startsWith('/inspections/templates');
+    return location.pathname === to || location.pathname.startsWith(`${to}/`);
+  };
+  const settingsSelected = settingsItems.some((item) => isSelected(item.to));
+
+  // Header title/subtitle: match the current rail or settings destination.
+  const activeItem = railItems.find((item) => isSelected(item.to));
+  const activeSettings = settingsItems.find((item) => isSelected(item.to));
+  const pageTitle = activeItem?.label ?? activeSettings?.label ?? (activeOrganization?.name ?? 'eSnag');
+  const subtitle = activeOrganization
+    ? [activeOrganization.code, activeOrganization.name].filter(Boolean).join(' · ')
+    : '';
+
+  const initials = (user?.name ?? 'U')
+    .split(' ')
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
+  // Focus the global search on "/" (unless already typing in a field).
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key !== '/') return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      event.preventDefault();
+      searchRef.current?.focus();
     };
-    const simpleFirstEnabled = activeOrganization?.feature_flags?.['ui.simple_first_v1'] !== false;
-    const showAdvanced = !simpleFirstEnabled || uiMode === 'advanced';
-    const mapItems = (items) => items
-        .filter((item) => can(item.feature) && hasRoleAccess(item.allowedRoles))
-        .map((item) => ({ ...item, label: t(item.labelKey) }));
-    const primaryItems = mapItems(PRIMARY_NAV_ITEMS);
-    const workspaceMoreItems = mapItems(WORKSPACE_MORE_ITEMS);
-    const adminItems = mapItems(ADMIN_NAV_ITEMS);
-    useEffect(() => {
-        if (typeof window !== 'undefined') {
-            window.localStorage.setItem('esnagging.ui.mode', uiMode);
-        }
-    }, [uiMode]);
-    useEffect(() => {
-        if (!simpleFirstEnabled && uiMode !== 'advanced') {
-            setUiMode('advanced');
-        }
-    }, [simpleFirstEnabled, uiMode]);
-    useEffect(() => {
-        if (showAdvanced || workspaceMoreItems.length <= 2) {
-            setWorkspaceMoreOpen(true);
-        }
-        else {
-            setWorkspaceMoreOpen(false);
-        }
-    }, [showAdvanced, workspaceMoreItems.length]);
-    useEffect(() => {
-        if (adminItems.length === 0) {
-            setAdminOpen(false);
-        }
-    }, [adminItems.length]);
-    const isSelected = (to) => {
-        if (to === '/projects') {
-            return location.pathname.startsWith('/projects');
-        }
-        if (to === '/templates') {
-            return location.pathname.startsWith('/templates') || location.pathname.startsWith('/inspections/templates');
-        }
-        return location.pathname === to || location.pathname.startsWith(`${to}/`);
-    };
-    const currentNav = [...primaryItems, ...workspaceMoreItems, ...adminItems].find((item) => isSelected(item.to));
-    const pageTitle = currentNav?.label ?? t('app.title');
-    const navItemStyles = {
-        borderRadius: 2,
-        mb: 0.6,
-        '&.Mui-selected': {
-            bgcolor: 'var(--surface-selected)',
-            color: 'primary.main',
-            '& .MuiListItemIcon-root': {
-                color: 'primary.main',
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const submitSearch = (event) => {
+    event.preventDefault();
+    const trimmed = query.trim();
+    if (trimmed) {
+      navigate(`/search?q=${encodeURIComponent(trimmed)}`);
+    }
+  };
+
+  const railItem = (item) => {
+    const Icon = item.icon;
+    const selected = isSelected(item.to);
+    return (
+      <Tooltip key={item.key} title={item.label} placement={direction === 'rtl' ? 'left' : 'right'} arrow>
+        <Box
+          component={RouterLink}
+          to={item.to}
+          id={item.id}
+          aria-current={selected ? 'page' : undefined}
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 0.5,
+            width: 60,
+            py: 1,
+            borderRadius: '12px',
+            textDecoration: 'none',
+            color: selected ? BRAND.navy : BRAND.muted,
+            background: selected ? 'rgba(36,72,143,0.10)' : 'transparent',
+            transition: 'background 160ms ease, color 160ms ease',
+            '&:hover': {
+              background: selected ? 'rgba(36,72,143,0.10)' : 'rgba(20,38,66,0.05)',
+              color: selected ? BRAND.navy : BRAND.ink,
             },
-        },
-    };
-    const renderNavItem = (item) => (<ListItemButton key={item.to} component={RouterLink} to={item.to} selected={isSelected(item.to)} id={item.id} onClick={() => setMobileOpen(false)} sx={navItemStyles}>
-        <ListItemIcon sx={{ minWidth: 34, color: 'text.secondary' }}>{item.icon}</ListItemIcon>
-        <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: 700 }}/>
-      </ListItemButton>);
-    const drawerContent = (<Box sx={{ px: 2, py: 2 }}>
-      <Box sx={{
-            p: 1.5,
-            borderRadius: 3,
-            mb: 2,
-            border: '1px solid rgba(23, 47, 92, 0.14)',
-            background: 'linear-gradient(180deg, #FFFFFF 0%, #F4F8FF 100%)',
-            boxShadow: '0 10px 20px rgba(23, 47, 92, 0.14)',
-        }}>
-        <BrandLogo sx={{ maxWidth: 212 }}/>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-          Quality lifecycle workspace
-        </Typography>
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.4 }}>
-          Role: {(activeRoleNames ?? []).join(', ') || 'n/a'}
-        </Typography>
+          }}
+        >
+          <Icon sx={{ fontSize: 20 }} />
+          <Box sx={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.01em' }}>{item.label}</Box>
+        </Box>
+      </Tooltip>
+    );
+  };
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: direction === 'rtl' ? 'row-reverse' : 'row', height: '100vh', overflow: 'hidden' }}>
+      {/* ---- 76px icon rail --------------------------------------------- */}
+      <Box
+        component="nav"
+        sx={{
+          width: RAIL_WIDTH,
+          flex: 'none',
+          height: '100%',
+          bgcolor: BRAND.panel,
+          borderInlineEnd: `1px solid ${BRAND.border}`,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 0.5,
+          py: 2,
+          px: 0,
+          overflowY: 'auto',
+        }}
+      >
+        <BrandMark />
+        {railItems.map(railItem)}
+
+        <Box sx={{ flex: 1 }} />
+
+        {settingsTarget && (
+          <Tooltip title={t('nav.settings') || 'Settings'} placement={direction === 'rtl' ? 'left' : 'right'} arrow>
+            <Box
+              component={RouterLink}
+              to={settingsTarget}
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 0.5,
+                width: 60,
+                py: 1,
+                borderRadius: '12px',
+                textDecoration: 'none',
+                color: settingsSelected ? BRAND.navy : BRAND.muted,
+                background: settingsSelected ? 'rgba(36,72,143,0.10)' : 'transparent',
+                '&:hover': { background: settingsSelected ? 'rgba(36,72,143,0.10)' : 'rgba(20,38,66,0.05)' },
+              }}
+            >
+              <SettingsRoundedIcon sx={{ fontSize: 20 }} />
+              <Box sx={{ fontSize: 9, fontWeight: 600 }}>{t('nav.settings') || 'Settings'}</Box>
+            </Box>
+          </Tooltip>
+        )}
+
+        <Tooltip title={user?.name ?? ''} placement={direction === 'rtl' ? 'left' : 'right'} arrow>
+          <Avatar
+            onClick={(event) => setAccountEl(event.currentTarget)}
+            sx={{
+              width: 34,
+              height: 34,
+              mt: 1,
+              bgcolor: BRAND.navy,
+              color: '#fff',
+              fontFamily: FONT_MONO,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            {initials}
+          </Avatar>
+        </Tooltip>
       </Box>
 
-      <Box sx={{ mb: 1.5 }}>
-        <Chip size="small" label={showAdvanced ? 'Advanced Mode' : 'Simple Mode'} color={showAdvanced ? 'primary' : 'default'} sx={{ mr: 1 }}/>
-        {simpleFirstEnabled ? (<>
-            <Button size="small" onClick={() => setUiMode((current) => current === 'advanced' ? 'simple' : 'advanced')}>
-              {showAdvanced ? 'Use Simple' : 'Use Advanced'}
-            </Button>
-            <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 0.8 }}>
-              {showAdvanced
-                ? 'Advanced mode shows all modules and controls.'
-                : 'Simple mode keeps daily actions first and hides setup tools.'}
+      {/* ---- Main column: header + scrollable content ------------------- */}
+      <Box sx={{ flex: 1, minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Box
+          component="header"
+          sx={{
+            height: 64,
+            flex: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            px: { xs: 2, md: 3.25 },
+            bgcolor: BRAND.panel,
+            borderBottom: `1px solid ${BRAND.border}`,
+          }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography sx={{ fontSize: 16.5, fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.1 }} noWrap>
+              {pageTitle}
             </Typography>
-          </>) : (<Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 0.8 }}>
-            Simple-first rollout is disabled for this organization.
-          </Typography>)}
-      </Box>
-
-      <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-        <InputLabel id="org-select-label">{t('common.organization')}</InputLabel>
-        <Select labelId="org-select-label" value={activeOrganization?.id ?? ''} label={t('common.organization')} onChange={(event) => {
-            const organizationId = Number(event.target.value);
-            selectOrganization(organizationId);
-            navigate('/projects');
-            setMobileOpen(false);
-        }}>
-          {organizations.map((organization) => (<MenuItem key={organization.id} value={organization.id}>
-              {organization.name}
-            </MenuItem>))}
-        </Select>
-      </FormControl>
-
-      <Typography variant="caption" sx={{
-            px: 1,
-            pb: 0.5,
-            color: 'text.secondary',
-            textTransform: 'uppercase',
-            letterSpacing: '0.08em',
-            fontWeight: 800,
-        }}>
-        Workspace
-      </Typography>
-      <List dense sx={{ pt: 0.2 }}>
-        {primaryItems.map((item) => renderNavItem(item))}
-      </List>
-
-      {workspaceMoreItems.length > 0 && (<>
-          <List dense sx={{ pt: 0 }}>
-              <ListItemButton onClick={() => setWorkspaceMoreOpen((current) => !current)} sx={{ borderRadius: 2 }}>
-              <ListItemText primary={showAdvanced ? 'Advanced Tools' : 'More Tools'} primaryTypographyProps={{ fontWeight: 700, color: 'text.secondary' }}/>
-              {workspaceMoreOpen ? <ExpandLessRoundedIcon fontSize="small"/> : <ExpandMoreRoundedIcon fontSize="small"/>}
-            </ListItemButton>
-          </List>
-          <Collapse in={workspaceMoreOpen} timeout="auto" unmountOnExit>
-            <List dense sx={{ pt: 0.2 }}>
-              {workspaceMoreItems.map((item) => renderNavItem(item))}
-            </List>
-          </Collapse>
-        </>)}
-
-      {adminItems.length > 0 && (<>
-          <Divider sx={{ my: 1.2 }}/>
-          <List dense sx={{ pt: 0 }}>
-            <ListItemButton onClick={() => setAdminOpen((current) => !current)} sx={{ borderRadius: 2 }}>
-              <ListItemText primary="Admin & Setup" primaryTypographyProps={{ fontWeight: 700, color: 'text.secondary' }}/>
-              {adminOpen ? <ExpandLessRoundedIcon fontSize="small"/> : <ExpandMoreRoundedIcon fontSize="small"/>}
-            </ListItemButton>
-          </List>
-          <Collapse in={adminOpen} timeout="auto" unmountOnExit>
-            <List dense sx={{ pt: 0.2 }}>
-              {adminItems.map((item) => renderNavItem(item))}
-            </List>
-          </Collapse>
-        </>)}
-    </Box>);
-    return (<Box sx={{ minHeight: '100vh', display: 'flex' }}>
-      <Drawer variant="permanent" open anchor={direction === 'rtl' ? 'right' : 'left'} sx={{
-            display: { xs: 'none', md: 'block' },
-            width: drawerWidth,
-            flexShrink: 0,
-            '& .MuiDrawer-paper': {
-                width: drawerWidth,
-                border: 0,
-                borderRadius: 0,
-                borderInlineEnd: '1px solid var(--outline-soft)',
-                background: 'linear-gradient(180deg, #FCFDFF 0%, #EFF4FC 100%)',
-            },
-        }}>
-        {drawerContent}
-      </Drawer>
-
-      <Drawer variant="temporary" open={mobileOpen} onClose={() => setMobileOpen(false)} anchor={direction === 'rtl' ? 'right' : 'left'} ModalProps={{ keepMounted: true }} sx={{
-            display: { xs: 'block', md: 'none' },
-            '& .MuiDrawer-paper': {
-                width: drawerWidth,
-                border: 0,
-            },
-        }}>
-        {drawerContent}
-      </Drawer>
-
-      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-        <AppBar position="sticky" elevation={0} sx={{
-            width: { md: `calc(100% - ${drawerWidth}px)` },
-            ml: { md: direction === 'rtl' ? 0 : `${drawerWidth}px` },
-            mr: { md: direction === 'rtl' ? `${drawerWidth}px` : 0 },
-        }}>
-          <Toolbar sx={{ px: { xs: 1.5, sm: 2.5 }, py: 1, gap: 1.2 }}>
-            <IconButton onClick={() => setMobileOpen(true)} sx={{ display: { xs: 'inline-flex', md: 'none' } }} aria-label="open navigation">
-              <MenuRoundedIcon />
-            </IconButton>
-
-            <Box sx={{ minWidth: 0, flexGrow: 1 }}>
-              <Typography variant="h6" noWrap>
-                {pageTitle}
+            {subtitle && (
+              <Typography sx={{ fontSize: 12, color: BRAND.muted, mt: '1px' }} noWrap>
+                {subtitle}
               </Typography>
-              <Typography variant="caption" color="text.secondary" noWrap>
-                {activeOrganization?.code} | {activeOrganization?.name}
-              </Typography>
-            </Box>
+            )}
+          </Box>
 
-            <FormControl size="small" sx={{ minWidth: 128, display: { xs: 'none', sm: 'flex' } }}>
-              <InputLabel id="locale-select-label">{t('common.language')}</InputLabel>
-              <Select labelId="locale-select-label" value={locale} label={t('common.language')} onChange={(event) => {
-            const nextLocale = String(event.target.value);
-            if (nextLocale === 'en' || nextLocale === 'ar') {
-                setLocale(nextLocale);
-            }
-        }}>
-                <MenuItem value="en">{t('language.en')}</MenuItem>
-                <MenuItem value="ar">{t('language.ar')}</MenuItem>
-              </Select>
-            </FormControl>
+          <Box sx={{ flex: 1 }} />
 
-            <NotificationsMenu canView={permissions.includes('notifications.view')}/>
+          <Box
+            component="form"
+            onSubmit={submitSearch}
+            sx={{
+              display: { xs: 'none', md: 'flex' },
+              alignItems: 'center',
+              gap: 1,
+              width: 300,
+              px: 1.6,
+              py: 1,
+              borderRadius: '11px',
+              bgcolor: '#F1F3F8',
+              border: `1px solid ${BRAND.borderHair}`,
+              color: BRAND.muted,
+              '&:focus-within': { borderColor: 'rgba(47,143,190,0.5)', bgcolor: '#fff' },
+            }}
+          >
+            <SearchRoundedIcon sx={{ fontSize: 18 }} />
+            <Box
+              component="input"
+              ref={searchRef}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search snags, drawings…"
+              sx={{
+                border: 'none',
+                outline: 'none',
+                background: 'transparent',
+                flex: 1,
+                minWidth: 0,
+                fontFamily: 'inherit',
+                fontSize: 13,
+                color: BRAND.ink,
+                '&::placeholder': { color: BRAND.muted },
+              }}
+            />
+            <Box sx={{ fontFamily: FONT_MONO, fontSize: 11, color: '#B6BFCC' }}>/</Box>
+          </Box>
 
-            <Tooltip title={user?.email ?? ''}>
-              <Stack direction="row" spacing={1} alignItems="center" sx={{ display: { xs: 'none', sm: 'flex' } }}>
-                <Avatar sx={{
-            width: 32,
-            height: 32,
-            bgcolor: 'primary.main',
-            fontWeight: 700,
-            fontSize: 13,
-        }}>
-                  {(user?.name ?? 'U')
-            .split(' ')
-            .map((part) => part[0])
-            .join('')
-            .slice(0, 2)
-            .toUpperCase()}
-                </Avatar>
-                <Typography variant="body2" sx={{ maxWidth: 160 }} noWrap>
-                  {user?.name}
-                </Typography>
-              </Stack>
-            </Tooltip>
+          <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={() => navigate('/projects')} sx={{ height: 40, whiteSpace: 'nowrap' }}>
+            New snag
+          </Button>
 
-            <Button color="inherit" variant="outlined" onClick={() => void logout()} sx={{ borderColor: 'var(--outline-soft)' }}>
-              {t('auth.logout')}
-            </Button>
-          </Toolbar>
-        </AppBar>
+          <NotificationsMenu canView={permissions.includes('notifications.view')} />
+        </Box>
 
-        <Box sx={{
-            ml: { md: direction === 'rtl' ? 0 : `${drawerWidth}px` },
-            mr: { md: direction === 'rtl' ? `${drawerWidth}px` : 0 },
-        }}>
-          <Container maxWidth={false} sx={{ px: { xs: 1.5, sm: 2.5 }, py: 2.5 }}>
-            <Box className="page-enter">
-              <Outlet />
-            </Box>
-          </Container>
+        <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: { xs: 2, md: '26px 28px' } }}>
+          <Box className="page-enter" sx={{ height: '100%' }}>
+            <Outlet />
+          </Box>
         </Box>
       </Box>
-    </Box>);
+
+      {/* ---- Account menu (org switch · language · settings · logout) --- */}
+      <Menu
+        open={Boolean(accountEl)}
+        anchorEl={accountEl}
+        onClose={() => setAccountEl(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: direction === 'rtl' ? 'left' : 'right' }}
+        transformOrigin={{ vertical: 'bottom', horizontal: direction === 'rtl' ? 'left' : 'right' }}
+        slotProps={{ paper: { sx: { width: 288, p: 0.5, borderRadius: '14px' } } }}
+      >
+        <Box sx={{ px: 1.5, py: 1 }}>
+          <Typography sx={{ fontWeight: 700, fontSize: 14 }} noWrap>
+            {user?.name}
+          </Typography>
+          <Typography sx={{ fontSize: 12, color: BRAND.muted }} noWrap>
+            {user?.email}
+          </Typography>
+        </Box>
+        <Divider />
+
+        {organizations.length > 0 && [
+          <Typography key="org-label" sx={{ px: 1.5, pt: 1, pb: 0.5, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {t('common.organization')}
+          </Typography>,
+          ...organizations.map((organization) => (
+            <MenuItem
+              key={`org-${organization.id}`}
+              selected={organization.id === activeOrganization?.id}
+              onClick={() => {
+                selectOrganization(organization.id);
+                setAccountEl(null);
+                navigate('/home');
+              }}
+            >
+              <ListItemIcon>
+                {organization.id === activeOrganization?.id ? <CheckRoundedIcon fontSize="small" /> : <ApartmentRoundedIcon fontSize="small" />}
+              </ListItemIcon>
+              <Typography variant="body2" noWrap>{organization.name}</Typography>
+            </MenuItem>
+          )),
+          <Divider key="org-divider" />,
+        ]}
+
+        <Typography sx={{ px: 1.5, pt: 1, pb: 0.5, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          {t('common.language')}
+        </Typography>
+        {['en', 'ar'].map((code) => (
+          <MenuItem
+            key={`lang-${code}`}
+            selected={locale === code}
+            onClick={() => {
+              setLocale(code);
+              setAccountEl(null);
+            }}
+          >
+            <ListItemIcon>
+              {locale === code ? <CheckRoundedIcon fontSize="small" /> : <TranslateRoundedIcon fontSize="small" />}
+            </ListItemIcon>
+            <Typography variant="body2">{t(`language.${code}`)}</Typography>
+          </MenuItem>
+        ))}
+
+        {settingsItems.length > 0 && [
+          <Divider key="settings-divider" />,
+          <Typography key="settings-label" sx={{ px: 1.5, pt: 1, pb: 0.5, fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {t('nav.settings') || 'Settings'}
+          </Typography>,
+          ...settingsItems.map((item) => (
+            <MenuItem
+              key={`set-${item.to}`}
+              onClick={() => {
+                navigate(item.to);
+                setAccountEl(null);
+              }}
+            >
+              <Typography variant="body2">{item.label}</Typography>
+            </MenuItem>
+          )),
+        ]}
+
+        <Divider />
+        <MenuItem
+          onClick={() => {
+            setAccountEl(null);
+            void logout();
+          }}
+        >
+          <ListItemIcon>
+            <LogoutRoundedIcon fontSize="small" />
+          </ListItemIcon>
+          <Typography variant="body2">{t('auth.logout')}</Typography>
+        </MenuItem>
+      </Menu>
+    </Box>
+  );
 };
