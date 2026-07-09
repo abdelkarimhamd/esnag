@@ -66,7 +66,7 @@ class AuthController extends Controller
         }
         $request->session()->regenerate();
 
-        return response()->json($this->authPayload($request, $user));
+        return response()->json($this->webAuthPayload($request, $user));
     }
 
     /**
@@ -130,7 +130,7 @@ class AuthController extends Controller
         }
         $request->session()->regenerate();
 
-        return response()->json($this->authPayload($request, $user));
+        return response()->json($this->webAuthPayload($request, $user));
     }
 
     public function mobileLogin(Request $request): JsonResponse
@@ -292,6 +292,13 @@ class AuthController extends Controller
 
     public function logout(Request $request): JsonResponse
     {
+        // Revoke the bearer token issued by webAuthPayload when the request is
+        // token-authenticated (the session may already be gone/clobbered).
+        $current = $request->user()?->currentAccessToken();
+        if ($current instanceof \Laravel\Sanctum\PersonalAccessToken) {
+            $current->delete();
+        }
+
         Auth::guard('web')->logout();
 
         if ($request->hasSession()) {
@@ -386,6 +393,24 @@ class AuthController extends Controller
     /**
      * @return array<string, mixed>
      */
+    /**
+     * Web session payload plus a bearer token. The SPA stores the token and sends
+     * it as `Authorization: Bearer` so authentication survives a full page reload
+     * even when the cookie session is dropped or clobbered — a known fragility of
+     * cross-middleware-group SPA sessions behind the dev proxy (a `web`-group request
+     * such as /sanctum/csrf-cookie or /broadcasting/auth can mint a competing guest
+     * session that overwrites the authenticated cookie). Sanctum resolves the session
+     * guard first and falls back to this token when the session has no user. The
+     * cookie session is retained so CSRF on state-changing requests keeps working.
+     */
+    private function webAuthPayload(Request $request, User $user): array
+    {
+        $payload = $this->authPayload($request, $user);
+        $payload['token'] = $user->createToken('web', ['*'])->plainTextToken;
+
+        return $payload;
+    }
+
     private function authPayload(Request $request, ?User $explicitUser = null): array
     {
         /** @var User $user */

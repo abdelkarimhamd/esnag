@@ -1,5 +1,5 @@
 import { createContext, useCallback, useEffect, useMemo, useState } from 'react';
-import { ACTIVE_ORG_STORAGE_KEY, ensureCsrfCookie, getActiveOrganizationId, setActiveOrganizationId } from '../api/client';
+import { ACTIVE_ORG_STORAGE_KEY, ensureCsrfCookie, getActiveOrganizationId, setActiveOrganizationId, setAuthToken } from '../api/client';
 import { api } from '../api/client';
 export const AuthContext = createContext(undefined);
 export const AuthProvider = ({ children }) => {
@@ -47,6 +47,7 @@ export const AuthProvider = ({ children }) => {
             password,
             otp_code: otpCode || undefined,
         });
+        setAuthToken(response.data.token);
         applyPayload(response.data);
         setProjectPermissionCache({});
     }, [applyPayload]);
@@ -57,6 +58,7 @@ export const AuthProvider = ({ children }) => {
     const loginWithEmailOtp = useCallback(async (email, password, code) => {
         await ensureCsrfCookie();
         const response = await api.post('/api/auth/otp/verify', { email, password, code });
+        setAuthToken(response.data.token);
         applyPayload(response.data);
         setProjectPermissionCache({});
     }, [applyPayload]);
@@ -65,6 +67,7 @@ export const AuthProvider = ({ children }) => {
             await api.post('/api/auth/logout');
         }
         finally {
+            setAuthToken(null);
             setUser(null);
             setOrganizations([]);
             setActiveOrganizationIdState(null);

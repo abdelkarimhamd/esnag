@@ -76,7 +76,14 @@ return [
     */
 
     'middleware' => [
-        'authenticate_session' => Laravel\Sanctum\Http\Middleware\AuthenticateSession::class,
+        // NOTE: `authenticate_session` (Sanctum's AuthenticateSession) is intentionally
+        // disabled. With it enabled, the SPA is logged out on the first stateful request
+        // after a full page reload — hitting `/sanctum/csrf-cookie` on boot invalidates the
+        // authenticated session (the password-hash binding check tears it down), sending the
+        // user back to /login on every refresh. It ships commented-out in stock Laravel and
+        // is only needed for "log out other devices on password change"; re-enable it only
+        // once that flow is required and the SPA boot no longer round-trips csrf-cookie.
+        // 'authenticate_session' => Laravel\Sanctum\Http\Middleware\AuthenticateSession::class,
         'encrypt_cookies' => Illuminate\Cookie\Middleware\EncryptCookies::class,
         'validate_csrf_token' => Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
     ],
