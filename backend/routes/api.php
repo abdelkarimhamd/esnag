@@ -56,17 +56,17 @@ use App\Http\Controllers\Api\WorkflowAutomationRuleController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function (): void {
-    Route::post('/mobile-login', [AuthController::class, 'mobileLogin']);
+    Route::post('/mobile-login', [AuthController::class, 'mobileLogin'])->middleware('throttle:auth');
     // Token-issuing email-OTP sign-in for mobile (item 15; SMS deferred per OD-14).
-    Route::post('/otp/mobile-request', [AuthController::class, 'mobileRequestOtp']);
-    Route::post('/otp/mobile-verify', [AuthController::class, 'mobileVerifyOtp']);
+    Route::post('/otp/mobile-request', [AuthController::class, 'mobileRequestOtp'])->middleware('throttle:auth');
+    Route::post('/otp/mobile-verify', [AuthController::class, 'mobileVerifyOtp'])->middleware('throttle:auth');
 
     Route::middleware('web')->group(function (): void {
-        Route::post('/login', [AuthController::class, 'login']);
+        Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:auth');
         // Email one-time-passcode sign-in (item 15). SMS channel is deferred (OD-14).
-        Route::post('/otp/request', [AuthController::class, 'requestOtp']);
-        Route::post('/otp/resend', [AuthController::class, 'requestOtp']);
-        Route::post('/otp/verify', [AuthController::class, 'verifyOtp']);
+        Route::post('/otp/request', [AuthController::class, 'requestOtp'])->middleware('throttle:auth');
+        Route::post('/otp/resend', [AuthController::class, 'requestOtp'])->middleware('throttle:auth');
+        Route::post('/otp/verify', [AuthController::class, 'verifyOtp'])->middleware('throttle:auth');
 
         Route::middleware('auth:sanctum')->group(function (): void {
             Route::post('/logout', [AuthController::class, 'logout']);

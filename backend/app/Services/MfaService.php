@@ -6,6 +6,7 @@ use App\Models\OtpChallenge;
 use App\Models\User;
 use App\Notifications\OtpCodeNotification;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -61,32 +62,38 @@ class MfaService
      */
     public function verifyOtp(User $user, string $code): bool
     {
-        $challenge = OtpChallenge::query()
-            ->where('user_id', $user->id)
-            ->whereNull('consumed_at')
-            ->where('expires_at', '>', now())
-            ->latest('id')
-            ->first();
+        // Row-locked in a transaction so the attempt cap is enforced atomically —
+        // concurrent verify requests serialize instead of all reading attempts=0
+        // and slipping past the check (TOCTOU).
+        return DB::transaction(function () use ($user, $code): bool {
+            $challenge = OtpChallenge::query()
+                ->where('user_id', $user->id)
+                ->whereNull('consumed_at')
+                ->where('expires_at', '>', now())
+                ->latest('id')
+                ->lockForUpdate()
+                ->first();
 
-        if (! $challenge) {
-            return false;
-        }
+            if (! $challenge) {
+                return false;
+            }
 
-        $challenge->increment('attempts');
+            if ($challenge->attempts >= self::OTP_MAX_ATTEMPTS) {
+                $challenge->forceFill(['consumed_at' => now()])->save();
 
-        if ($challenge->attempts > self::OTP_MAX_ATTEMPTS) {
+                return false;
+            }
+
+            $challenge->forceFill(['attempts' => $challenge->attempts + 1])->save();
+
+            if (! Hash::check($code, $challenge->code_hash)) {
+                return false;
+            }
+
             $challenge->forceFill(['consumed_at' => now()])->save();
 
-            return false;
-        }
-
-        if (! Hash::check($code, $challenge->code_hash)) {
-            return false;
-        }
-
-        $challenge->forceFill(['consumed_at' => now()])->save();
-
-        return true;
+            return true;
+        });
     }
 
     private function maskDestination(User $user, string $channel): ?string

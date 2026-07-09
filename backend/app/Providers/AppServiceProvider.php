@@ -77,6 +77,14 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(120)->by($key);
         });
 
+        // Strict limiter for credential + OTP endpoints — blunts online brute force,
+        // credential stuffing and OTP-email flooding. Keyed by email + IP.
+        RateLimiter::for('auth', function (Request $request): Limit {
+            $email = mb_strtolower(trim((string) $request->input('email')));
+
+            return Limit::perMinute(8)->by(($email !== '' ? $email : 'anon').'|'.$request->ip());
+        });
+
         RateLimiter::for('sync', function (Request $request): Limit {
             $key = $request->user()?->id ? 'sync:'.$request->user()->id : 'sync-ip:'.$request->ip();
 

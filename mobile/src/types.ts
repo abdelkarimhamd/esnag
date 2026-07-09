@@ -161,6 +161,7 @@ export interface SyncPolicyRecord {
 export interface SyncConflictRecord {
   id: number
   op_id: string
+  organization_id: number | null
   entity_type: 'snag'
   entity_id: number | null
   operation_type: string
@@ -174,29 +175,42 @@ export interface SyncConflictRecord {
 
 export interface ServerSnag {
   id: number
+  organization_id?: number | null
   reference: string
   title: string
   description?: string | null
   status: SnagStatus
   priority: SnagPriority
   project_id: number
-  drawing_id: number
+  // Operational snags carry no drawing/pin — the server sends these as null.
+  drawing_id: number | null
   building_id?: number | null
   floor_id?: number | null
   location_id?: number | null
   equipment_id?: number | null
-  pin_x: number
-  pin_y: number
+  pin_x: number | null
+  pin_y: number | null
+  snag_type?: 'construction' | 'operational' | null
+  source_organization_id?: number | null
   assigned_to?: number | null
   due_date?: string | null
+  trade?: string | null
+  is_dlp?: boolean | number | null
+  cluster?: string | null
+  toc_reference?: string | null
   updated_at: string
   created_at: string
+}
+
+export interface ServerSnagDetail extends ServerSnag {
+  [key: string]: unknown
 }
 
 export interface LocalSnagRecord {
   local_id: number
   server_id: number | null
   client_uuid: string | null
+  organization_id: number | null
   reference: string | null
   title: string
   description: string | null
@@ -212,14 +226,24 @@ export interface LocalSnagRecord {
   pin_y: number
   assigned_to: number | null
   due_date: string | null
+  trade: string | null
+  is_dlp: number
+  cluster: string | null
+  toc_reference: string | null
   updated_at: string
   is_dirty: number
+}
+
+export interface LocalSnagStatusCount {
+  status: string
+  count: number
 }
 
 export interface LocalCommentRecord {
   local_id: number
   server_id: number | null
   client_uuid: string
+  organization_id: number | null
   snag_server_id: number
   body: string
   is_internal: number
@@ -231,7 +255,9 @@ export interface LocalAttachmentRecord {
   local_id: number
   server_id: number | null
   client_uuid: string
+  organization_id: number | null
   snag_server_id: number
+  snag_client_uuid: string | null
   local_uri: string
   file_name: string
   mime_type: string
@@ -248,6 +274,7 @@ export interface LocalAttachmentRecord {
 export interface QueueOperationRecord {
   id: number
   op_id: string
+  organization_id: number | null
   type: 'snag.create' | 'snag.update' | 'snag.transition' | 'snag.comment.create'
   payload: string
   client_updated_at: string
@@ -260,6 +287,7 @@ export interface QueueOperationRecord {
 
 export interface EquipmentRecord {
   id: number
+  organization_id?: number | null
   code: string
   name: string
   status: 'ok' | 'warn' | 'critical' | 'inactive'
@@ -272,6 +300,7 @@ export interface EquipmentRecord {
 
 export interface EquipmentLogRecord {
   id: number
+  organization_id?: number | null
   equipment_id: number
   snag_id?: number | null
   status: 'ok' | 'warn' | 'critical'
@@ -310,6 +339,26 @@ export interface MobileAuthDeviceRecord {
   last_ip?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface NotificationRecord {
+  id: string
+  type: string
+  data: Record<string, unknown>
+  read_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface OrganizationMemberRecord {
+  id: number
+  name: string
+  email: string
+  roles: string[]
+  org_roles: string[]
+  permissions: string[]
+  companies: Array<{ id: number; name: string }>
+  teams: Array<{ id: number; name: string }>
 }
 
 export interface SyncApplyResult {

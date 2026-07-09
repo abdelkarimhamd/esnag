@@ -129,6 +129,17 @@ class Phase4EmailOtpTest extends TestCase
         ])->assertStatus(422);
     }
 
+    public function test_login_is_rate_limited(): void
+    {
+        // The 'auth' limiter allows 8/min per email+IP; the 9th is throttled.
+        for ($i = 0; $i < 8; $i++) {
+            $this->postJson('/api/auth/login', ['email' => 'ratelimit@sky.demo', 'password' => 'nope']);
+        }
+
+        $this->postJson('/api/auth/login', ['email' => 'ratelimit@sky.demo', 'password' => 'nope'])
+            ->assertStatus(429);
+    }
+
     public function test_otp_endpoints_reject_bad_credentials(): void
     {
         $user = $this->user();

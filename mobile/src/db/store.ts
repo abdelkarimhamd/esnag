@@ -275,10 +275,10 @@ export const upsertServerSnags = (snags: ServerSnag[]) => {
         INSERT INTO snags_local (
           server_id, client_uuid, organization_id, reference, title, description, status, priority,
           project_id, drawing_id, building_id, floor_id, location_id, equipment_id,
-          pin_x, pin_y, assigned_to, due_date, trade, is_dlp, cluster, toc_reference,
+          pin_x, pin_y, snag_type, source_organization_id, assigned_to, due_date, trade, is_dlp, cluster, toc_reference,
           created_at, updated_at, is_dirty
         )
-        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         ON CONFLICT(server_id) DO UPDATE SET
           organization_id = excluded.organization_id,
           reference = excluded.reference,
@@ -294,6 +294,8 @@ export const upsertServerSnags = (snags: ServerSnag[]) => {
           equipment_id = excluded.equipment_id,
           pin_x = excluded.pin_x,
           pin_y = excluded.pin_y,
+          snag_type = excluded.snag_type,
+          source_organization_id = excluded.source_organization_id,
           assigned_to = excluded.assigned_to,
           due_date = excluded.due_date,
           trade = excluded.trade,
@@ -312,13 +314,17 @@ export const upsertServerSnags = (snags: ServerSnag[]) => {
       snag.status,
       snag.priority,
       snag.project_id,
-      snag.drawing_id,
+      // Operational snags come down with null drawing/pin; store 0 sentinels to
+      // satisfy the NOT NULL columns (snag_type distinguishes them).
+      snag.drawing_id ?? 0,
       snag.building_id ?? null,
       snag.floor_id ?? null,
       snag.location_id ?? null,
       snag.equipment_id ?? null,
-      snag.pin_x,
-      snag.pin_y,
+      snag.pin_x ?? 0,
+      snag.pin_y ?? 0,
+      snag.snag_type ?? 'construction',
+      snag.source_organization_id ?? null,
       snag.assigned_to ?? null,
       snag.due_date ?? null,
       snag.trade ?? null,
