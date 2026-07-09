@@ -271,6 +271,29 @@ export interface HandoverAttachment {
   uploader?: { id: number; name: string } | null
 }
 
+export interface HandoverComment {
+  id: number
+  body: string
+  is_internal: boolean
+  stage_order: number | null
+  cycle_number: number
+  created_at?: string
+  user?: { id: number; name: string } | null
+  source_company?: { id: number; name: string; type?: string } | null
+}
+
+export interface AuditEventRow {
+  id: number
+  action: string
+  actor_role: string | null
+  reason?: string | null
+  subject_type?: string | null
+  subject_id?: number | null
+  created_at?: string
+  actor?: { id: number; name: string } | null
+  actor_company?: { id: number; name: string; type?: string } | null
+}
+
 export interface HandoverRequestDetail extends HandoverRequestRow {
   description?: string | null
   stage_graph_snapshot: HandoverStageNode[]
@@ -375,6 +398,25 @@ export const apiClient = {
 
   listHandoverAttachments: (token: string, organizationId: number, id: number) =>
     request<{ data: HandoverAttachment[] }>(`/api/handovers/requests/${id}/attachments`, { token, organizationId }),
+
+  listHandoverComments: (token: string, organizationId: number, id: number) =>
+    request<{ data: HandoverComment[] }>(`/api/handovers/requests/${id}/comments`, { token, organizationId }),
+
+  // Unified cross-entity audit trail (item 9 / BR-FR-009/010).
+  listAuditEvents: (token: string, organizationId: number, actionPrefix?: string) => {
+    const qs = new URLSearchParams()
+    if (actionPrefix) qs.set('action_prefix', actionPrefix)
+    qs.set('per_page', '50')
+    return request<{ data: AuditEventRow[] }>(`/api/audit/events?${qs.toString()}`, { token, organizationId })
+  },
+
+  postHandoverComment: (token: string, organizationId: number, id: number, body: string, isInternal: boolean) =>
+    request<{ data: HandoverComment }>(`/api/handovers/requests/${id}/comments`, {
+      method: 'POST',
+      token,
+      organizationId,
+      body: { body, is_internal: isInternal },
+    }),
 
   uploadHandoverAttachment: (
     token: string,

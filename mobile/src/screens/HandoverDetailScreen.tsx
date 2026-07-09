@@ -4,7 +4,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as ImagePicker from 'expo-image-picker'
-import { apiClient, normalizeMobileApiError, type HandoverRequestDetail } from '../api/client'
+import { apiClient, normalizeMobileApiError, type HandoverComment, type HandoverRequestDetail } from '../api/client'
 import type { SnagsStackParamList } from '../navigation/types'
 import { useAuth } from '../providers/AuthProvider'
 import { useAppTheme } from '../theme/ThemeProvider'
@@ -36,6 +36,22 @@ export const HandoverDetailScreen = ({ route }: Props) => {
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [reasonText, setReasonText] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [comments, setComments] = useState<HandoverComment[]>([])
+  const [commentBody, setCommentBody] = useState('')
+  const [commentInternal, setCommentInternal] = useState(false)
+  const [commentBusy, setCommentBusy] = useState(false)
+
+  const loadComments = useCallback(async () => {
+    if (!token || !activeOrganization) {
+      return
+    }
+    try {
+      const response = await apiClient.listHandoverComments(token, activeOrganization.id, requestId)
+      setComments(response.data)
+    } catch {
+      setComments([])
+    }
+  }, [token, activeOrganization?.id, requestId])
 
   const load = useCallback(async () => {
     if (!token || !activeOrganization) {
@@ -45,14 +61,32 @@ export const HandoverDetailScreen = ({ route }: Props) => {
       const response = await apiClient.fetchHandoverRequest(token, activeOrganization.id, requestId)
       setDetail(response.data)
       setError(null)
+      void loadComments()
     } catch (e) {
       setError(normalizeMobileApiError(e, 'Unable to load the handover request.').message)
     } finally {
       setLoading(false)
     }
-  }, [token, activeOrganization?.id, requestId])
+  }, [token, activeOrganization?.id, requestId, loadComments])
 
   useFocusEffect(useCallback(() => { void load() }, [load]))
+
+  const postComment = async () => {
+    if (!token || !activeOrganization || !detail || !commentBody.trim()) {
+      return
+    }
+    setCommentBusy(true)
+    try {
+      await apiClient.postHandoverComment(token, activeOrganization.id, detail.id, commentBody.trim(), commentInternal)
+      setCommentBody('')
+      setCommentInternal(false)
+      await loadComments()
+    } catch (e) {
+      setError(normalizeMobileApiError(e, 'Unable to post the comment.').message)
+    } finally {
+      setCommentBusy(false)
+    }
+  }
 
   const perform = async (action: string, reason: string | null) => {
     if (!token || !activeOrganization || !detail) {
@@ -245,6 +279,48 @@ export const HandoverDetailScreen = ({ route }: Props) => {
               </View>
             ))
           )}
+        </View>
+
+        {/* Discussion by stage / org (F2) */}
+        <View style={[styles.card, cardSx]}>
+          <Label>DISCUSSION · BY STAGE</Label>
+          {comments.length === 0 ? (
+            <Text style={{ fontFamily: theme.fonts.sans, fontSize: 12, color: theme.colors.textMuted, marginTop: 4 }}>No comments yet.</Text>
+          ) : (
+            comments.map((c) => (
+              <View key={c.id} style={{ paddingVertical: 7, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
+                <Text style={{ fontFamily: theme.fonts.sansSemiBold, fontSize: 12.5, color: theme.colors.text }}>
+                  {c.user?.name ?? 'User'}
+                  {c.source_company?.name ? <Text style={{ fontFamily: theme.fonts.sans, color: theme.colors.textMuted }}>{`  ·  ${c.source_company.name}`}</Text> : null}
+                  {c.is_internal ? <Text style={{ fontFamily: theme.fonts.mono, fontSize: 9, color: theme.colors.warning }}>{'   INTERNAL'}</Text> : null}
+                </Text>
+                <Text style={{ fontFamily: theme.fonts.sans, fontSize: 12.5, color: theme.colors.textMuted, marginTop: 2 }}>{c.body}</Text>
+                {c.stage_order != null ? (
+                  <Text style={{ fontFamily: theme.fonts.mono, fontSize: 10, color: theme.colors.textMuted, marginTop: 2 }}>{`stage ${c.stage_order}`}</Text>
+                ) : null}
+              </View>
+            ))
+          )}
+          <TextInput
+            value={commentBody}
+            onChangeText={setCommentBody}
+            placeholder="Add a comment…"
+            placeholderTextColor={theme.colors.textMuted}
+            multiline
+            style={[styles.input, { marginTop: 10, backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border, color: theme.colors.text, fontFamily: theme.fonts.sans }]}
+          />
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+            <Pressable onPress={() => setCommentInternal((v) => !v)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={{ width: 16, height: 16, borderRadius: 4, borderWidth: 1.5, borderColor: commentInternal ? theme.colors.primary : theme.colors.border, backgroundColor: commentInternal ? theme.colors.primary : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                {commentInternal ? <Text style={{ color: theme.colors.primaryContrast, fontSize: 10 }}>✓</Text> : null}
+              </View>
+              <Text style={{ fontFamily: theme.fonts.sans, fontSize: 11.5, color: theme.colors.textMuted }}>Internal to my party</Text>
+            </Pressable>
+            <Pressable disabled={commentBusy || !commentBody.trim()} onPress={() => void postComment()}
+              style={[styles.actionBtn, { backgroundColor: theme.colors.primary, opacity: commentBusy || !commentBody.trim() ? 0.5 : 1 }]}>
+              <Text style={{ color: theme.colors.primaryContrast, fontFamily: theme.fonts.sansSemiBold, fontSize: 12 }}>Post</Text>
+            </Pressable>
+          </View>
         </View>
 
         {/* Audit */}
