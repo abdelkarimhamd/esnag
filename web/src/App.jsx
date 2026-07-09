@@ -32,6 +32,7 @@ const HandoverRequestsPage = lazy(() => import('./pages/HandoverRequestsPage').t
 const WorkflowConfigPage = lazy(() => import('./pages/WorkflowConfigPage').then((module) => ({ default: module.WorkflowConfigPage })));
 const AuditTrailPage = lazy(() => import('./pages/AuditTrailPage').then((module) => ({ default: module.AuditTrailPage })));
 const DrawingOverlayPage = lazy(() => import('./pages/DrawingOverlayPage').then((module) => ({ default: module.DrawingOverlayPage })));
+const AdvancedSearchPage = lazy(() => import('./pages/AdvancedSearchPage').then((module) => ({ default: module.AdvancedSearchPage })));
 const LazyPageFallback = <div style={{ padding: 16 }}>Loading module...</div>;
 function App() {
     return (<Router>
@@ -46,6 +47,11 @@ function App() {
           <Route index element={<Navigate to="/home" replace/>}/>
           <Route path="home" element={<HomePage />}/>
           <Route path="search" element={<SearchResultsPage />}/>
+          <Route path="search/advanced" element={<PermissionRoute requiredAny={FEATURE_ACCESS.advancedSearch.anyOf}>
+                <Suspense fallback={LazyPageFallback}>
+                  <AdvancedSearchPage />
+                </Suspense>
+              </PermissionRoute>}/>
           <Route path="projects" element={<PermissionRoute requiredAny={FEATURE_ACCESS.projects.anyOf}>
                 <ProjectsPage />
               </PermissionRoute>}/>

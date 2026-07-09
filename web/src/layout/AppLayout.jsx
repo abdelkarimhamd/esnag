@@ -47,6 +47,7 @@ const RAIL_ITEMS = [
 
 // Settings / admin surfaces reached from the account menu and the rail gear.
 const SETTINGS_ITEMS = [
+  { to: '/search/advanced', feature: 'advancedSearch', label: 'Advanced search' },
   { to: '/access-control', feature: 'accessControl', label: 'Team & access' },
   { to: '/master-data', feature: 'masterData', label: 'Location & categories' },
   { to: '/handovers/workflow', feature: 'workflowConfig', label: 'Handover workflow' },
