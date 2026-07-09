@@ -145,6 +145,16 @@ const fullMenu: MenuSection[] = [
         stackScreen: 'MasterDataAdmin',
         roles: ['owner', 'project_manager'],
       },
+      {
+        id: 'role-matrix',
+        type: 'route',
+        label: 'Roles & Permissions',
+        subtitle: 'Role permission matrix',
+        icon: 'shield-checkmark-outline',
+        tab: 'Snags',
+        stackScreen: 'RoleMatrix',
+        roles: ['owner', 'project_manager'],
+      },
     ],
   },
   {

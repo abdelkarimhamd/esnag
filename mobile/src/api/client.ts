@@ -207,6 +207,11 @@ export interface MasterDataRecord {
   code: string | null
 }
 
+export interface RoleMatrix {
+  permissions: string[]
+  roles: { name: string; permissions: string[] }[]
+}
+
 // ── Multi-party handover routing (Phase 2) ──
 export interface HandoverParty {
   id: number
@@ -421,6 +426,10 @@ export const apiClient = {
   // Categories have no destroy route — deactivate via update (is_active=false).
   updateSnagCategory: (token: string, organizationId: number, id: number, body: { name?: string; code?: string | null; is_active?: boolean }) =>
     request<{ data: MasterDataRecord }>(`/api/snag-categories/${id}`, { method: 'PUT', token, organizationId, body }),
+
+  // Read-only roles↔permissions matrix (§H / H3 / BR-FR-040).
+  getRoleMatrix: (token: string, organizationId: number) =>
+    request<{ data: RoleMatrix }>('/api/rbac/role-matrix', { token, organizationId }),
 
   listHandoverRequests: (token: string, organizationId: number, params: { project_id?: number; status?: string } = {}) => {
     const qs = new URLSearchParams()
