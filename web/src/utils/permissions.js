@@ -4,6 +4,7 @@ export const FEATURE_ACCESS = {
     drawingViewer: { anyOf: ['drawings.view'] },
     drawingOverlay: { anyOf: ['drawings.view'] },
     createSnag: { anyOf: ['snags.create'] },
+    snagInspection: { anyOf: ['snags.view'] },
     advancedSearch: { anyOf: ['snags.view'] },
     board: { anyOf: ['kanban.view'] },
     dashboard: { anyOf: ['dashboard.view'] },
