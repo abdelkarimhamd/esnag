@@ -202,6 +202,94 @@ class AuthController extends Controller
         ]);
     }
 
+    /**
+     * Step 1 of email-OTP sign-in on mobile (item 15): validate credentials, then
+     * email a one-time code. The mobile flow is token-based, so verify issues a
+     * Sanctum token rather than a session — this is the token-issuing counterpart
+     * to requestOtp()/verifyOtp() above.
+     */
+    public function mobileRequestOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+        ]);
+
+        $user = User::query()->where('email', $validated['email'])->first();
+        if (! $user || ! Hash::check($validated['password'], $user->password)) {
+            return $this->invalidCredentialsResponse();
+        }
+
+        $challenge = $this->mfaService->issueOtp($user, 'email');
+
+        return response()->json([
+            'data' => [
+                'otp_sent' => true,
+                'channel' => $challenge->channel,
+                'destination' => $challenge->destination,
+                'expires_at' => optional($challenge->expires_at)->toIso8601String(),
+            ],
+        ]);
+    }
+
+    /**
+     * Step 2 of email-OTP sign-in on mobile: validate credentials + the emailed
+     * code, then mint a Sanctum token and register the device (mirrors mobileLogin).
+     */
+    public function mobileVerifyOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+            'code' => ['required', 'string', 'max:12'],
+            'device_name' => ['nullable', 'string', 'max:120'],
+            'device_id' => ['nullable', 'string', 'max:120'],
+            'platform' => ['nullable', 'string', 'max:40'],
+            'app_version' => ['nullable', 'string', 'max:80'],
+            'trust_device' => ['sometimes', 'boolean'],
+        ]);
+
+        $user = User::query()->where('email', $validated['email'])->first();
+        if (! $user || ! Hash::check($validated['password'], $user->password)) {
+            return $this->invalidCredentialsResponse();
+        }
+
+        if (! $this->mfaService->verifyOtp($user, $validated['code'])) {
+            return response()->json([
+                'message' => 'Invalid or expired verification code.',
+            ], 422);
+        }
+
+        $deviceName = $validated['device_name'] ?? sprintf('mobile-%s', now()->format('YmdHis'));
+        $deviceId = trim((string) ($validated['device_id'] ?? ''));
+        if ($deviceId === '') {
+            $deviceId = substr(hash('sha256', $deviceName.'|'.$request->ip().'|'.$request->userAgent()), 0, 64);
+        }
+
+        $token = $user->createToken($deviceName, ['*']);
+
+        $trustDays = $this->organizationSecurityService->mobileTrustDaysForUser($user);
+        $this->mobileDeviceSecurityService->registerLoginDevice(
+            $user,
+            $deviceId,
+            $deviceName,
+            $validated['platform'] ?? 'mobile',
+            $validated['app_version'] ?? null,
+            (bool) ($validated['trust_device'] ?? false),
+            $trustDays,
+            $token->accessToken->id,
+            $request,
+        );
+
+        return response()->json([
+            ...$this->authPayload($request, $user),
+            'token' => $token->plainTextToken,
+            'token_type' => 'Bearer',
+            'device_id' => $deviceId,
+            'mfa_verified' => true,
+        ]);
+    }
+
     public function logout(Request $request): JsonResponse
     {
         Auth::guard('web')->logout();

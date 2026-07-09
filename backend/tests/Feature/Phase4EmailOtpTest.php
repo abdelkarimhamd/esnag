@@ -86,6 +86,49 @@ class Phase4EmailOtpTest extends TestCase
         ])->assertStatus(422);
     }
 
+    public function test_mobile_otp_verify_issues_a_token(): void
+    {
+        Notification::fake();
+        $user = $this->user();
+
+        $this->postJson('/api/auth/otp/mobile-request', [
+            'email' => $user->email, 'password' => 'secret-pass',
+        ])->assertOk()->assertJsonPath('data.otp_sent', true);
+
+        $code = null;
+        Notification::assertSentTo($user, OtpCodeNotification::class, function (OtpCodeNotification $notification) use (&$code) {
+            $code = $notification->code;
+
+            return true;
+        });
+
+        $this->postJson('/api/auth/otp/mobile-verify', [
+            'email' => $user->email, 'password' => 'secret-pass', 'code' => $code, 'device_name' => 'test-device',
+        ])
+            ->assertOk()
+            ->assertJsonPath('mfa_verified', true)
+            ->assertJsonStructure(['token', 'token_type', 'device_id']);
+    }
+
+    public function test_mobile_otp_verify_rejects_a_wrong_code(): void
+    {
+        Notification::fake();
+        $user = $this->user();
+        $this->postJson('/api/auth/otp/mobile-request', ['email' => $user->email, 'password' => 'secret-pass'])->assertOk();
+
+        $code = null;
+        Notification::assertSentTo($user, OtpCodeNotification::class, function (OtpCodeNotification $notification) use (&$code) {
+            $code = $notification->code;
+
+            return true;
+        });
+        $wrong = $code === '000000' ? '111111' : '000000';
+
+        $this->postJson('/api/auth/otp/mobile-verify', [
+            'email' => $user->email, 'password' => 'secret-pass', 'code' => $wrong, 'device_name' => 'test-device',
+        ])->assertStatus(422);
+    }
+
     public function test_otp_endpoints_reject_bad_credentials(): void
     {
         $user = $this->user();

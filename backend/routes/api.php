@@ -57,6 +57,9 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function (): void {
     Route::post('/mobile-login', [AuthController::class, 'mobileLogin']);
+    // Token-issuing email-OTP sign-in for mobile (item 15; SMS deferred per OD-14).
+    Route::post('/otp/mobile-request', [AuthController::class, 'mobileRequestOtp']);
+    Route::post('/otp/mobile-verify', [AuthController::class, 'mobileVerifyOtp']);
 
     Route::middleware('web')->group(function (): void {
         Route::post('/login', [AuthController::class, 'login']);

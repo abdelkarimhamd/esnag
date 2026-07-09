@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store'
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { apiClient } from '../api/client'
+import { setActiveOrganizationId as setStoreActiveOrganizationId } from '../db/store'
 import type { OrganizationSummary, UserSummary } from '../types'
 
 const TOKEN_KEY = 'esnagging.mobile.token'
@@ -14,6 +15,8 @@ interface AuthContextValue {
   organizations: OrganizationSummary[]
   activeOrganization: OrganizationSummary | null
   login: (email: string, password: string, otpCode?: string | null, trustDevice?: boolean) => Promise<void>
+  requestEmailOtp: (email: string, password: string) => Promise<void>
+  loginWithEmailOtp: (email: string, password: string, code: string, trustDevice?: boolean) => Promise<void>
   logout: () => Promise<void>
   refresh: () => Promise<void>
   selectOrganization: (organizationId: number) => Promise<void>
@@ -57,6 +60,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       payload.organizations[0]?.id ??
       null
 
+    // Scope the local DB before the sync daemon (keyed on this id) fires, so the
+    // first pull/push after login stamps + reads under the correct org.
+    setStoreActiveOrganizationId(resolvedOrgId)
     setActiveOrganizationId(resolvedOrgId)
     if (resolvedOrgId) {
       await SecureStore.setItemAsync(ACTIVE_ORG_KEY, String(resolvedOrgId))
@@ -79,6 +85,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setToken(null)
     setUser(null)
     setOrganizations([])
+    setStoreActiveOrganizationId(null)
     setActiveOrganizationId(null)
     await SecureStore.deleteItemAsync(TOKEN_KEY)
     await SecureStore.deleteItemAsync(ACTIVE_ORG_KEY)
@@ -98,12 +105,23 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       payload.organizations.find((organization) => organization.id === storedOrgId)?.id ??
       payload.organizations[0]?.id ??
       null
+    setStoreActiveOrganizationId(resolvedOrgId)
     setActiveOrganizationId(resolvedOrgId)
   }
 
   const login = async (email: string, password: string, otpCode?: string | null, trustDevice = true) => {
     const deviceId = await resolveDeviceId()
     const payload = await apiClient.mobileLogin(email, password, undefined, deviceId, otpCode, trustDevice)
+    await applySession(payload.token, payload)
+  }
+
+  const requestEmailOtp = async (email: string, password: string) => {
+    await apiClient.requestMobileOtp(email, password)
+  }
+
+  const loginWithEmailOtp = async (email: string, password: string, code: string, trustDevice = true) => {
+    const deviceId = await resolveDeviceId()
+    const payload = await apiClient.verifyMobileOtp(email, password, code, deviceId, trustDevice)
     await applySession(payload.token, payload)
   }
 
@@ -120,6 +138,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }
 
   const selectOrganization = async (organizationId: number) => {
+    // Set the local DB scope BEFORE the sync daemon (which re-keys on the new
+    // activeOrganizationId React state below) fires its first sync for the new
+    // org — otherwise that sync would stamp/read rows under the previous org.
+    // The per-org pull cursor makes the daemon's next run a proper delta for
+    // this org; queued operations for the previous org stay put (no wipe).
+    setStoreActiveOrganizationId(organizationId)
     setActiveOrganizationId(organizationId)
     await SecureStore.setItemAsync(ACTIVE_ORG_KEY, String(organizationId))
   }
@@ -145,6 +169,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           payload.organizations[0]?.id ??
           null
 
+        // Restore the local DB scope on cold start before the sync daemon runs.
+        setStoreActiveOrganizationId(resolvedOrgId)
         setActiveOrganizationId(resolvedOrgId)
       } catch {
         await clearSession()
@@ -169,6 +195,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       organizations,
       activeOrganization,
       login,
+      requestEmailOtp,
+      loginWithEmailOtp,
       logout,
       refresh,
       selectOrganization,

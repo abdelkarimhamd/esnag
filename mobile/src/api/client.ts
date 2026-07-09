@@ -326,6 +326,27 @@ export const apiClient = {
       },
     }),
 
+  // Email one-time-passcode sign-in for mobile (item 15). verify mints a token.
+  requestMobileOtp: (email: string, password: string) =>
+    request<{ data: { otp_sent: boolean; channel: string; destination?: string | null; expires_at?: string | null } }>('/api/auth/otp/mobile-request', {
+      method: 'POST',
+      body: { email, password },
+    }),
+
+  verifyMobileOtp: (email: string, password: string, code: string, deviceId?: string | null, trustDevice = true) =>
+    request<AuthPayload & { token: string; token_type: string }>('/api/auth/otp/mobile-verify', {
+      method: 'POST',
+      body: {
+        email,
+        password,
+        code,
+        device_name: `${Platform.OS}-device`,
+        device_id: deviceId || undefined,
+        platform: Platform.OS,
+        trust_device: trustDevice,
+      },
+    }),
+
   me: (token: string) =>
     request<AuthPayload>('/api/auth/me', {
       token,
