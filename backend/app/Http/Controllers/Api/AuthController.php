@@ -69,6 +69,70 @@ class AuthController extends Controller
         return response()->json($this->authPayload($request, $user));
     }
 
+    /**
+     * Step 1 of email-OTP sign-in (item 15): validate credentials, then send a
+     * one-time code by email. Does NOT log the user in. The TOTP login above is
+     * untouched — this is an additive alternative second factor.
+     */
+    public function requestOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+        ]);
+
+        $user = User::query()->where('email', $validated['email'])->first();
+        if (! $user || ! Hash::check($validated['password'], $user->password)) {
+            return $this->invalidCredentialsResponse();
+        }
+
+        $challenge = $this->mfaService->issueOtp($user, 'email');
+
+        return response()->json([
+            'data' => [
+                'otp_sent' => true,
+                'channel' => $challenge->channel,
+                'destination' => $challenge->destination,
+                'expires_at' => optional($challenge->expires_at)->toIso8601String(),
+            ],
+        ]);
+    }
+
+    /**
+     * Step 2 of email-OTP sign-in: validate credentials + the emailed code, then
+     * establish the session (mirrors login()'s completion).
+     */
+    public function verifyOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+            'code' => ['required', 'string', 'max:12'],
+            'remember' => ['sometimes', 'boolean'],
+        ]);
+
+        $user = User::query()->where('email', $validated['email'])->first();
+        if (! $user || ! Hash::check($validated['password'], $user->password)) {
+            return $this->invalidCredentialsResponse();
+        }
+
+        if (! $this->mfaService->verifyOtp($user, $validated['code'])) {
+            return response()->json([
+                'message' => 'Invalid or expired verification code.',
+            ], 422);
+        }
+
+        Auth::login($user, (bool) ($validated['remember'] ?? false));
+        if (! $request->hasSession()) {
+            return response()->json([
+                'message' => 'Session store is unavailable for this login request. Configure SANCTUM_STATEFUL_DOMAINS and retry.',
+            ], 500);
+        }
+        $request->session()->regenerate();
+
+        return response()->json($this->authPayload($request, $user));
+    }
+
     public function mobileLogin(Request $request): JsonResponse
     {
         $validated = $request->validate([

@@ -60,6 +60,10 @@ Route::prefix('auth')->group(function (): void {
 
     Route::middleware('web')->group(function (): void {
         Route::post('/login', [AuthController::class, 'login']);
+        // Email one-time-passcode sign-in (item 15). SMS channel is deferred (OD-14).
+        Route::post('/otp/request', [AuthController::class, 'requestOtp']);
+        Route::post('/otp/resend', [AuthController::class, 'requestOtp']);
+        Route::post('/otp/verify', [AuthController::class, 'verifyOtp']);
 
         Route::middleware('auth:sanctum')->group(function (): void {
             Route::post('/logout', [AuthController::class, 'logout']);
