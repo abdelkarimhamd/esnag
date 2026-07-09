@@ -137,7 +137,9 @@ Route::middleware('auth:sanctum')->group(function (): void {
         Route::post('/snags/{snag}/attachments', [SnagAttachmentController::class, 'store'])->middleware('throttle:uploads');
         Route::get('/snag-attachments/{attachment}/download', [SnagAttachmentController::class, 'download']);
 
-        // Snag inspections — record an on-site inspection of a received snag's asset.
+        // Snag inspections — request one (assign a team), then record it on site.
+        Route::get('/snags/{snag}/inspection-requests', [SnagInspectionController::class, 'requests']);
+        Route::post('/snags/{snag}/inspection-requests', [SnagInspectionController::class, 'requestInspection']);
         Route::get('/snags/{snag}/inspections', [SnagInspectionController::class, 'index']);
         Route::post('/snags/{snag}/inspections', [SnagInspectionController::class, 'store']);
         Route::get('/snag-inspections/{snagInspection}', [SnagInspectionController::class, 'show']);

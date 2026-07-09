@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Api\Concerns\InteractsWithOrganizationContext;
 use App\Http\Controllers\Controller;
 use App\Models\Equipment;
+use App\Models\InspectionRequest;
 use App\Models\Snag;
 use App\Models\SnagInspection;
 use App\Models\SnagInspectionAttachment;
@@ -110,7 +111,75 @@ class SnagInspectionController extends Controller
             'created_by' => $request->user()->id,
         ]);
 
+        // Recording the inspection completes the request it answers.
+        if (! empty($validated['inspection_request_id'])) {
+            InspectionRequest::query()
+                ->where('organization_id', $organization->id)
+                ->where('snag_id', $snag->id)
+                ->whereKey($validated['inspection_request_id'])
+                ->update([
+                    'status' => InspectionRequest::STATUS_COMPLETED,
+                    'completed_at' => now(),
+                ]);
+        }
+
         return response()->json(['data' => $inspection->load(self::WITH)], 201);
+    }
+
+    // Inspection requests raised on a snag (assigned to a responsible team/person).
+    public function requests(Request $request, Snag $snag): JsonResponse
+    {
+        $this->assertOrganization($snag->organization_id, $request);
+        $this->assertReadAccess($request, $snag);
+
+        $requests = InspectionRequest::query()
+            ->where('snag_id', $snag->id)
+            ->with(['team:id,name,code', 'assignee:id,name,email', 'requester:id,name'])
+            ->orderByDesc('created_at')
+            ->get();
+
+        return response()->json(['data' => $requests]);
+    }
+
+    public function requestInspection(Request $request, Snag $snag): JsonResponse
+    {
+        $this->assertOrganization($snag->organization_id, $request);
+        $this->assertWriteAccess($request, $snag);
+
+        $validated = $request->validate([
+            'title' => ['nullable', 'string', 'max:255'],
+            'description' => ['nullable', 'string'],
+            'stakeholder_team_id' => ['nullable', 'integer', 'exists:stakeholder_teams,id'],
+            'assigned_to' => ['nullable', 'integer', 'exists:users,id'],
+            'scheduled_for' => ['nullable', 'date'],
+        ]);
+
+        if (empty($validated['stakeholder_team_id']) && empty($validated['assigned_to'])) {
+            abort(422, 'Assign the inspection request to a team or a person.');
+        }
+
+        $organization = $this->currentOrganization($request);
+
+        $inspectionRequest = InspectionRequest::create([
+            'organization_id' => $organization->id,
+            'project_id' => $snag->project_id,
+            'snag_id' => $snag->id,
+            'reference' => $this->nextRequestReference($organization->id),
+            'request_type' => 'ir',
+            'title' => $validated['title'] ?? ('Inspect '.($snag->reference ?? 'snag')),
+            'description' => $validated['description'] ?? null,
+            'status' => ! empty($validated['scheduled_for'])
+                ? InspectionRequest::STATUS_SCHEDULED
+                : InspectionRequest::STATUS_REQUESTED,
+            'requested_by' => $request->user()->id,
+            'assigned_to' => $validated['assigned_to'] ?? null,
+            'stakeholder_team_id' => $validated['stakeholder_team_id'] ?? null,
+            'scheduled_for' => $validated['scheduled_for'] ?? null,
+        ]);
+
+        return response()->json([
+            'data' => $inspectionRequest->load(['team:id,name,code', 'assignee:id,name,email', 'requester:id,name']),
+        ], 201);
     }
 
     public function show(Request $request, SnagInspection $snagInspection): JsonResponse
@@ -202,6 +271,13 @@ class SnagInspectionController extends Controller
         $next = SnagInspection::query()->where('organization_id', $organizationId)->count() + 1;
 
         return 'SI-'.str_pad((string) $next, 5, '0', STR_PAD_LEFT);
+    }
+
+    private function nextRequestReference(int $organizationId): string
+    {
+        $next = InspectionRequest::query()->where('organization_id', $organizationId)->whereNotNull('snag_id')->count() + 1;
+
+        return 'SIR-'.str_pad((string) $next, 5, '0', STR_PAD_LEFT);
     }
 
     private function nextAssetCode(int $organizationId): string
