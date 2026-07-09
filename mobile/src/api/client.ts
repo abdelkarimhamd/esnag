@@ -301,6 +301,7 @@ export interface HandoverRequestDetail extends HandoverRequestRow {
   events?: HandoverEventRow[]
   summary?: HandoverSummary
   attachments?: HandoverAttachment[]
+  inspection_submissions?: { id: number; reference: string; status: string }[]
 }
 
 export const apiClient = {

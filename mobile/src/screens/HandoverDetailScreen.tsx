@@ -281,6 +281,19 @@ export const HandoverDetailScreen = ({ route }: Props) => {
           )}
         </View>
 
+        {/* Linked inspections */}
+        {(detail.inspection_submissions ?? []).length > 0 && (
+          <View style={[styles.card, cardSx]}>
+            <Label>INSPECTIONS</Label>
+            {(detail.inspection_submissions ?? []).map((sub) => (
+              <View key={sub.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 7, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
+                <Text style={{ fontFamily: theme.fonts.monoSemiBold, fontSize: 12, color: theme.colors.text }}>{sub.reference}</Text>
+                <Text style={{ fontFamily: theme.fonts.mono, fontSize: 10, color: theme.colors.textMuted, textTransform: 'uppercase' }}>{String(sub.status).replace(/_/g, ' ')}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* Discussion by stage / org (F2) */}
         <View style={[styles.card, cardSx]}>
           <Label>DISCUSSION · BY STAGE</Label>
