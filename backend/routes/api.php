@@ -41,6 +41,7 @@ use App\Http\Controllers\Api\PunchListController;
 use App\Http\Controllers\Api\RbacController;
 use App\Http\Controllers\Api\RootCauseCategoryController;
 use App\Http\Controllers\Api\SnagAttachmentController;
+use App\Http\Controllers\Api\SnagInspectionController;
 use App\Http\Controllers\Api\SearchController;
 use App\Http\Controllers\Api\SnagBulkActionController;
 use App\Http\Controllers\Api\SnagCategoryController;
@@ -135,6 +136,14 @@ Route::middleware('auth:sanctum')->group(function (): void {
         Route::delete('/snags/{snag}/watchers/{user}', [SnagWatcherController::class, 'destroy']);
         Route::post('/snags/{snag}/attachments', [SnagAttachmentController::class, 'store'])->middleware('throttle:uploads');
         Route::get('/snag-attachments/{attachment}/download', [SnagAttachmentController::class, 'download']);
+
+        // Snag inspections — record an on-site inspection of a received snag's asset.
+        Route::get('/snags/{snag}/inspections', [SnagInspectionController::class, 'index']);
+        Route::post('/snags/{snag}/inspections', [SnagInspectionController::class, 'store']);
+        Route::get('/snag-inspections/{snagInspection}', [SnagInspectionController::class, 'show']);
+        Route::put('/snag-inspections/{snagInspection}', [SnagInspectionController::class, 'update']);
+        Route::post('/snag-inspections/{snagInspection}/attachments', [SnagInspectionController::class, 'storeAttachment'])->middleware('throttle:uploads');
+        Route::get('/snag-inspection-attachments/{attachment}/download', [SnagInspectionController::class, 'downloadAttachment']);
         Route::get('/snag-escalation-rules', [SnagEscalationRuleController::class, 'index']);
         Route::post('/snag-escalation-rules', [SnagEscalationRuleController::class, 'store']);
         Route::put('/snag-escalation-rules/{snagEscalationRule}', [SnagEscalationRuleController::class, 'update']);
