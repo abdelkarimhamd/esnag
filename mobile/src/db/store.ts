@@ -10,6 +10,7 @@ import type {
   OfflineFloorZoneRow,
   OfflineLocationLookupRow,
   LocalSnagRecord,
+  LocalSnagStatusCount,
   QueueOperationRecord,
   ServerSnag,
   SyncConflictRecord,
@@ -17,6 +18,77 @@ import type {
 } from '../types'
 
 const parsePayload = <T>(value: string): T => JSON.parse(value) as T
+
+/**
+ * Active organization scope for every per-org local read/write. Mirrored into
+ * sync_meta ('active_org') so it survives an app reload before AuthProvider has
+ * re-hydrated. Reads fall back to the mirror when the module was reloaded but
+ * setActiveOrganizationId has not been called yet this session.
+ */
+let currentOrganizationId: number | null = null
+
+const ORG_SCOPED_MUTABLE_TABLES = [
+  'snags_local',
+  'operations_queue',
+  'comments_local',
+  'attachments_local',
+  'sync_conflicts',
+  // equipment tables gained organization_id in v2 as well; backfill their
+  // pre-v2 rows to the active org so listEquipment/listEquipmentLogs scope.
+  'equipment_local',
+  'equipment_logs_local',
+] as const
+
+const readActiveOrgFromMeta = (): number | null => {
+  const raw = getMetaValue('active_org')
+  if (!raw) {
+    return null
+  }
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+/**
+ * Resolve the active org id, preferring the in-memory value and falling back to
+ * the sync_meta mirror after a JS reload. Returns null only when no org has ever
+ * been set (fresh install, pre-login).
+ */
+export const getActiveOrganizationId = (): number | null => {
+  if (currentOrganizationId !== null) {
+    return currentOrganizationId
+  }
+  currentOrganizationId = readActiveOrgFromMeta()
+  return currentOrganizationId
+}
+
+/**
+ * Backfill existing NULL-org rows to the given org: the local cache built before
+ * v2 belonged to whichever org was active. Runs once per table — after backfill
+ * no NULL-org rows remain so the WHERE guard is a no-op on subsequent calls.
+ */
+const backfillNullOrgRows = (organizationId: number) => {
+  for (const table of ORG_SCOPED_MUTABLE_TABLES) {
+    db.runSync(
+      `UPDATE ${table} SET organization_id = ? WHERE organization_id IS NULL`,
+      organizationId,
+    )
+  }
+}
+
+/**
+ * Set the active organization scope. Stores it in-memory and mirrors it into
+ * sync_meta so a reload can recover it. On first assignment of a concrete org it
+ * backfills any pre-v2 NULL-org rows to that org so the existing offline cache
+ * and queued operations are attributed correctly (never wiped).
+ */
+export const setActiveOrganizationId = (id: number | null) => {
+  currentOrganizationId = id
+
+  if (id !== null) {
+    setMetaValue('active_org', String(id))
+    backfillNullOrgRows(id)
+  }
+}
 
 export const defaultSyncPolicy: SyncPolicyRecord = {
   background_enabled: true,
@@ -107,10 +179,11 @@ export const queueOperation = (
 ) => {
   db.runSync(
     `
-      INSERT INTO operations_queue (op_id, type, payload, client_updated_at, status, retries, next_retry_at, last_error, created_at)
-      VALUES (?, ?, ?, ?, 'pending', 0, NULL, NULL, ?)
+      INSERT INTO operations_queue (op_id, organization_id, type, payload, client_updated_at, status, retries, next_retry_at, last_error, created_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?)
     `,
     opId,
+    getActiveOrganizationId(),
     type,
     JSON.stringify(payload),
     clientUpdatedAt,
@@ -120,17 +193,25 @@ export const queueOperation = (
   return opId
 }
 
-export const listPendingOperations = (limit = 40): QueueOperationRecord[] => {
+// The sync PUSH must scope to the organization the running sync is for — NOT the
+// module-global active org, which can flip mid-sync if the user switches orgs while
+// a pull is in flight (that race could otherwise POST org B's ops under org A's
+// header and bleed a snag into the wrong tenant). Callers in the sync engine pass
+// the explicit organizationId; other callers fall back to the active org.
+export const listPendingOperations = (limit = 40, organizationId?: number | null): QueueOperationRecord[] => {
   const now = nowIso()
+  const orgId = organizationId !== undefined ? organizationId : getActiveOrganizationId()
   return db.getAllSync<QueueOperationRecord>(
     `
       SELECT *
       FROM operations_queue
       WHERE status = 'pending'
+        AND organization_id = ?
         AND (next_retry_at IS NULL OR next_retry_at <= ?)
       ORDER BY created_at ASC
       LIMIT ?
     `,
+    orgId,
     now,
     limit,
   )
@@ -162,13 +243,28 @@ export const markOperationFailed = (opId: string, retries: number, nextRetryAt: 
   )
 }
 
-export const listQueuedOperations = (): QueueOperationRecord[] =>
-  db.getAllSync<QueueOperationRecord>('SELECT * FROM operations_queue ORDER BY created_at ASC')
+export const listQueuedOperations = (): QueueOperationRecord[] => {
+  const orgId = getActiveOrganizationId()
+  if (orgId !== null) {
+    return db.getAllSync<QueueOperationRecord>(
+      'SELECT * FROM operations_queue WHERE organization_id = ? ORDER BY created_at ASC',
+      orgId,
+    )
+  }
+  return db.getAllSync<QueueOperationRecord>('SELECT * FROM operations_queue ORDER BY created_at ASC')
+}
 
 export const queueCount = (): number => {
-  const row = db.getFirstSync<{ total: number }>(
-    "SELECT COUNT(*) as total FROM operations_queue WHERE status = 'pending'",
-  )
+  const orgId = getActiveOrganizationId()
+  const row =
+    orgId !== null
+      ? db.getFirstSync<{ total: number }>(
+          "SELECT COUNT(*) as total FROM operations_queue WHERE status = 'pending' AND organization_id = ?",
+          orgId,
+        )
+      : db.getFirstSync<{ total: number }>(
+          "SELECT COUNT(*) as total FROM operations_queue WHERE status = 'pending'",
+        )
   return row?.total ?? 0
 }
 
@@ -177,12 +273,14 @@ export const upsertServerSnags = (snags: ServerSnag[]) => {
     db.runSync(
       `
         INSERT INTO snags_local (
-          server_id, client_uuid, reference, title, description, status, priority,
+          server_id, client_uuid, organization_id, reference, title, description, status, priority,
           project_id, drawing_id, building_id, floor_id, location_id, equipment_id,
-          pin_x, pin_y, assigned_to, due_date, created_at, updated_at, is_dirty
+          pin_x, pin_y, assigned_to, due_date, trade, is_dlp, cluster, toc_reference,
+          created_at, updated_at, is_dirty
         )
-        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         ON CONFLICT(server_id) DO UPDATE SET
+          organization_id = excluded.organization_id,
           reference = excluded.reference,
           title = excluded.title,
           description = excluded.description,
@@ -198,11 +296,16 @@ export const upsertServerSnags = (snags: ServerSnag[]) => {
           pin_y = excluded.pin_y,
           assigned_to = excluded.assigned_to,
           due_date = excluded.due_date,
+          trade = excluded.trade,
+          is_dlp = excluded.is_dlp,
+          cluster = excluded.cluster,
+          toc_reference = excluded.toc_reference,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
           is_dirty = 0
       `,
       snag.id,
+      (snag.organization_id as number | null | undefined) ?? getActiveOrganizationId(),
       snag.reference,
       snag.title,
       snag.description ?? null,
@@ -218,6 +321,10 @@ export const upsertServerSnags = (snags: ServerSnag[]) => {
       snag.pin_y,
       snag.assigned_to ?? null,
       snag.due_date ?? null,
+      snag.trade ?? null,
+      snag.is_dlp ? 1 : 0,
+      snag.cluster ?? null,
+      snag.toc_reference ?? null,
       snag.created_at,
       snag.updated_at,
     )
@@ -230,38 +337,54 @@ export const createLocalSnag = (payload: {
   description?: string | null
   priority: 'low' | 'medium' | 'high' | 'critical'
   project_id: number
-  drawing_id: number
+  // drawing_id / pin_x / pin_y are optional for operational snags. The columns are
+  // NOT NULL locally, so operational snags store 0 sentinels; snag_type distinguishes.
+  drawing_id?: number | null
   building_id?: number | null
   floor_id?: number | null
   location_id?: number | null
-  pin_x: number
-  pin_y: number
+  pin_x?: number | null
+  pin_y?: number | null
+  snag_type?: 'construction' | 'operational'
+  source_organization_id?: number | null
   assigned_to?: number | null
   due_date?: string | null
+  trade?: string | null
+  is_dlp?: boolean
+  cluster?: string | null
+  toc_reference?: string | null
 }) => {
   const now = nowIso()
   const result = db.runSync(
     `
       INSERT INTO snags_local (
-        server_id, client_uuid, reference, title, description, status, priority,
+        server_id, client_uuid, organization_id, reference, title, description, status, priority,
         project_id, drawing_id, building_id, floor_id, location_id, equipment_id,
-        pin_x, pin_y, assigned_to, due_date, created_at, updated_at, is_dirty
+        pin_x, pin_y, snag_type, source_organization_id, assigned_to, due_date, trade, is_dlp, cluster, toc_reference,
+        created_at, updated_at, is_dirty
       )
-      VALUES (NULL, ?, NULL, ?, ?, 'new', ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 1)
+      VALUES (NULL, ?, ?, NULL, ?, ?, 'new', ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     `,
     payload.client_uuid,
+    getActiveOrganizationId(),
     payload.title,
     payload.description ?? null,
     payload.priority,
     payload.project_id,
-    payload.drawing_id,
+    payload.drawing_id ?? 0,
     payload.building_id ?? null,
     payload.floor_id ?? null,
     payload.location_id ?? null,
-    payload.pin_x,
-    payload.pin_y,
+    payload.pin_x ?? 0,
+    payload.pin_y ?? 0,
+    payload.snag_type ?? 'construction',
+    payload.source_organization_id ?? null,
     payload.assigned_to ?? null,
     payload.due_date ?? null,
+    payload.trade ?? null,
+    payload.is_dlp ? 1 : 0,
+    payload.cluster ?? null,
+    payload.toc_reference ?? null,
     now,
     now,
   ) as { lastInsertRowId: number }
@@ -312,13 +435,31 @@ export const updateLocalSnagFromConflict = (
   )
 }
 
-export const listLocalSnags = (filters?: {
+export interface LocalSnagFilters {
   project_id?: number | null
   floor_id?: number | null
   location_id?: number | null
-}): LocalSnagRecord[] => {
+  status?: string
+  priority?: string
+  trade?: string
+  isDlp?: boolean
+  assignedTo?: number
+  dueWindow?: 'overdue' | '7d'
+  search?: string
+}
+
+const buildSnagFilterClauses = (filters?: LocalSnagFilters): { where: string; params: Array<number | string> } => {
   const conditions: string[] = []
   const params: Array<number | string> = []
+
+  // Strict org scope: once the active org is set (and the v2 backfill has run)
+  // every snags_local row carries an organization_id, so filtering by it keeps
+  // one org's cache from bleeding into another after an org switch.
+  const orgId = getActiveOrganizationId()
+  if (orgId !== null) {
+    conditions.push('organization_id = ?')
+    params.push(orgId)
+  }
 
   if (filters?.project_id) {
     conditions.push('project_id = ?')
@@ -335,7 +476,51 @@ export const listLocalSnags = (filters?: {
     params.push(filters.location_id)
   }
 
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  if (filters?.status) {
+    conditions.push('status = ?')
+    params.push(filters.status)
+  }
+
+  if (filters?.priority) {
+    conditions.push('priority = ?')
+    params.push(filters.priority)
+  }
+
+  if (filters?.trade) {
+    conditions.push('trade = ?')
+    params.push(filters.trade)
+  }
+
+  if (typeof filters?.isDlp === 'boolean') {
+    conditions.push('is_dlp = ?')
+    params.push(filters.isDlp ? 1 : 0)
+  }
+
+  if (filters?.assignedTo) {
+    conditions.push('assigned_to = ?')
+    params.push(filters.assignedTo)
+  }
+
+  if (filters?.dueWindow === 'overdue') {
+    conditions.push("due_date IS NOT NULL AND date(due_date) < date('now')")
+  } else if (filters?.dueWindow === '7d') {
+    conditions.push("due_date IS NOT NULL AND date(due_date) >= date('now') AND date(due_date) <= date('now', '+7 day')")
+  }
+
+  if (filters?.search && filters.search.trim()) {
+    const term = `%${filters.search.trim()}%`
+    conditions.push('(title LIKE ? OR reference LIKE ?)')
+    params.push(term, term)
+  }
+
+  return {
+    where: conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '',
+    params,
+  }
+}
+
+export const listLocalSnags = (filters?: LocalSnagFilters): LocalSnagRecord[] => {
+  const { where, params } = buildSnagFilterClauses(filters)
 
   return db.getAllSync<LocalSnagRecord>(
     `
@@ -349,15 +534,57 @@ export const listLocalSnags = (filters?: {
   )
 }
 
-export const findLocalSnag = (localId: number): LocalSnagRecord | null =>
-  db.getFirstSync<LocalSnagRecord>('SELECT * FROM snags_local WHERE local_id = ?', localId) ?? null
+export const listLocalSnagCountsByStatus = (filters?: LocalSnagFilters): LocalSnagStatusCount[] => {
+  const { where, params } = buildSnagFilterClauses(filters)
 
-export const findLocalSnagByServerId = (serverId: number): LocalSnagRecord | null =>
-  db.getFirstSync<LocalSnagRecord>('SELECT * FROM snags_local WHERE server_id = ?', serverId) ?? null
+  return db.getAllSync<LocalSnagStatusCount>(
+    `
+      SELECT status, COUNT(*) as count
+      FROM snags_local
+      ${where}
+      GROUP BY status
+      ORDER BY count DESC
+    `,
+    ...params,
+  )
+}
+
+export const findLocalSnag = (localId: number): LocalSnagRecord | null => {
+  const orgId = getActiveOrganizationId()
+  if (orgId !== null) {
+    return (
+      db.getFirstSync<LocalSnagRecord>(
+        'SELECT * FROM snags_local WHERE local_id = ? AND organization_id = ?',
+        localId,
+        orgId,
+      ) ?? null
+    )
+  }
+  return db.getFirstSync<LocalSnagRecord>('SELECT * FROM snags_local WHERE local_id = ?', localId) ?? null
+}
+
+export const findLocalSnagByServerId = (serverId: number): LocalSnagRecord | null => {
+  const orgId = getActiveOrganizationId()
+  if (orgId !== null) {
+    return (
+      db.getFirstSync<LocalSnagRecord>(
+        'SELECT * FROM snags_local WHERE server_id = ? AND organization_id = ?',
+        serverId,
+        orgId,
+      ) ?? null
+    )
+  }
+  return db.getFirstSync<LocalSnagRecord>('SELECT * FROM snags_local WHERE server_id = ?', serverId) ?? null
+}
 
 export const updateLocalSnag = (
   serverId: number,
-  patch: Partial<Pick<LocalSnagRecord, 'title' | 'description' | 'priority' | 'assigned_to' | 'due_date' | 'equipment_id'>>,
+  patch: Partial<
+    Pick<
+      LocalSnagRecord,
+      'title' | 'description' | 'priority' | 'assigned_to' | 'due_date' | 'equipment_id' | 'trade' | 'is_dlp' | 'cluster' | 'toc_reference'
+    >
+  >,
 ) => {
   const existing = findLocalSnagByServerId(serverId)
   if (!existing) {
@@ -373,6 +600,10 @@ export const updateLocalSnag = (
           assigned_to = ?,
           due_date = ?,
           equipment_id = ?,
+          trade = ?,
+          is_dlp = ?,
+          cluster = ?,
+          toc_reference = ?,
           updated_at = ?,
           is_dirty = 1
       WHERE server_id = ?
@@ -383,6 +614,10 @@ export const updateLocalSnag = (
     patch.assigned_to ?? existing.assigned_to,
     patch.due_date ?? existing.due_date,
     patch.equipment_id ?? existing.equipment_id,
+    patch.trade ?? existing.trade,
+    patch.is_dlp ?? existing.is_dlp,
+    patch.cluster ?? existing.cluster,
+    patch.toc_reference ?? existing.toc_reference,
     nowIso(),
     serverId,
   )
@@ -410,15 +645,17 @@ export const upsertServerComments = (comments: Array<Record<string, unknown>>) =
     const updatedAt = String(comment.updated_at ?? createdAt)
     db.runSync(
       `
-        INSERT INTO comments_local (server_id, client_uuid, snag_server_id, body, is_internal, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO comments_local (server_id, client_uuid, organization_id, snag_server_id, body, is_internal, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(server_id) DO UPDATE SET
+          organization_id = excluded.organization_id,
           body = excluded.body,
           is_internal = excluded.is_internal,
           updated_at = excluded.updated_at
       `,
       serverId,
       String(comment.client_uuid ?? `srv-${serverId}`),
+      (comment.organization_id as number | null | undefined) ?? getActiveOrganizationId(),
       Number(comment.snag_id ?? 0),
       String(comment.body ?? ''),
       Number(comment.is_internal ? 1 : 0),
@@ -432,10 +669,11 @@ export const addLocalComment = (payload: { snag_server_id: number; client_uuid: 
   const now = nowIso()
   db.runSync(
     `
-      INSERT INTO comments_local (server_id, client_uuid, snag_server_id, body, is_internal, created_at, updated_at)
-      VALUES (NULL, ?, ?, ?, ?, ?, ?)
+      INSERT INTO comments_local (server_id, client_uuid, organization_id, snag_server_id, body, is_internal, created_at, updated_at)
+      VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
     `,
     payload.client_uuid,
+    getActiveOrganizationId(),
     payload.snag_server_id,
     payload.body,
     payload.is_internal ? 1 : 0,
@@ -444,8 +682,23 @@ export const addLocalComment = (payload: { snag_server_id: number; client_uuid: 
   )
 }
 
-export const listCommentsForSnag = (snagServerId: number): LocalCommentRecord[] =>
-  db.getAllSync<LocalCommentRecord>(
+export const listCommentsForSnag = (snagServerId: number): LocalCommentRecord[] => {
+  const orgId = getActiveOrganizationId()
+  if (orgId !== null) {
+    return db.getAllSync<LocalCommentRecord>(
+      `
+        SELECT *
+        FROM comments_local
+        WHERE snag_server_id = ?
+          AND organization_id = ?
+        ORDER BY datetime(created_at) DESC
+        LIMIT 200
+      `,
+      snagServerId,
+      orgId,
+    )
+  }
+  return db.getAllSync<LocalCommentRecord>(
     `
       SELECT *
       FROM comments_local
@@ -455,6 +708,7 @@ export const listCommentsForSnag = (snagServerId: number): LocalCommentRecord[] 
     `,
     snagServerId,
   )
+}
 
 export const upsertServerAttachments = (attachments: Array<Record<string, unknown>>) => {
   for (const attachment of attachments) {
@@ -464,11 +718,12 @@ export const upsertServerAttachments = (attachments: Array<Record<string, unknow
     db.runSync(
       `
         INSERT INTO attachments_local (
-          server_id, client_uuid, snag_server_id, local_uri, file_name, mime_type, file_size,
+          server_id, client_uuid, organization_id, snag_server_id, local_uri, file_name, mime_type, file_size,
           upload_state, retries, next_retry_at, remote_path, error_message, created_at, updated_at
         )
-        VALUES (?, ?, ?, '', ?, ?, ?, 'uploaded', 0, NULL, ?, NULL, ?, ?)
+        VALUES (?, ?, ?, ?, '', ?, ?, ?, 'uploaded', 0, NULL, ?, NULL, ?, ?)
         ON CONFLICT(server_id) DO UPDATE SET
+          organization_id = excluded.organization_id,
           file_name = excluded.file_name,
           mime_type = excluded.mime_type,
           file_size = excluded.file_size,
@@ -478,6 +733,7 @@ export const upsertServerAttachments = (attachments: Array<Record<string, unknow
       `,
       serverId,
       String(attachment.client_uuid ?? `srv-att-${serverId}`),
+      (attachment.organization_id as number | null | undefined) ?? getActiveOrganizationId(),
       Number(attachment.snag_id ?? 0),
       String(attachment.file_name ?? ''),
       String(attachment.mime_type ?? 'application/octet-stream'),
@@ -490,7 +746,8 @@ export const upsertServerAttachments = (attachments: Array<Record<string, unknow
 }
 
 export const queueLocalAttachment = (payload: {
-  snag_server_id: number
+  snag_server_id?: number | null
+  snag_client_uuid?: string | null
   local_uri: string
   file_name: string
   mime_type: string
@@ -501,13 +758,15 @@ export const queueLocalAttachment = (payload: {
   db.runSync(
     `
       INSERT INTO attachments_local (
-        server_id, client_uuid, snag_server_id, local_uri, file_name, mime_type, file_size,
+        server_id, client_uuid, organization_id, snag_server_id, snag_client_uuid, local_uri, file_name, mime_type, file_size,
         upload_state, retries, next_retry_at, remote_path, error_message, created_at, updated_at
       )
-      VALUES (NULL, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, NULL, ?, ?)
+      VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, NULL, ?, ?)
     `,
     payload.client_uuid,
-    payload.snag_server_id,
+    getActiveOrganizationId(),
+    payload.snag_server_id ?? 0,
+    payload.snag_client_uuid ?? null,
     payload.local_uri,
     payload.file_name,
     payload.mime_type,
@@ -517,20 +776,95 @@ export const queueLocalAttachment = (payload: {
   )
 }
 
-export const listPendingAttachments = (limit = 20): LocalAttachmentRecord[] => {
+export const findSnagServerIdByClientUuid = (clientUuid: string): number | null => {
+  const row = db.getFirstSync<{ server_id: number | null }>(
+    'SELECT server_id FROM snags_local WHERE client_uuid = ?',
+    clientUuid,
+  )
+  return row?.server_id ?? null
+}
+
+export const bindAttachmentToServerSnag = (localId: number, snagServerId: number) => {
+  db.runSync(
+    `
+      UPDATE attachments_local
+      SET snag_server_id = ?,
+          updated_at = ?
+      WHERE local_id = ?
+    `,
+    snagServerId,
+    nowIso(),
+    localId,
+  )
+}
+
+export const bindQueuedAttachmentsToServerSnag = (snagClientUuid: string, snagServerId: number) => {
+  db.runSync(
+    `
+      UPDATE attachments_local
+      SET snag_server_id = ?,
+          updated_at = ?
+      WHERE snag_client_uuid = ?
+        AND snag_server_id <= 0
+    `,
+    snagServerId,
+    nowIso(),
+    snagClientUuid,
+  )
+}
+
+// See listPendingOperations: the push must scope to the explicit sync org, not the
+// (racy) module-global active org.
+export const listPendingAttachments = (limit = 20, organizationId?: number | null): LocalAttachmentRecord[] => {
   const now = nowIso()
+  const orgId = organizationId !== undefined ? organizationId : getActiveOrganizationId()
   return db.getAllSync<LocalAttachmentRecord>(
     `
       SELECT *
       FROM attachments_local
       WHERE upload_state IN ('pending', 'failed')
+        AND organization_id = ?
         AND (next_retry_at IS NULL OR next_retry_at <= ?)
       ORDER BY datetime(created_at) ASC
       LIMIT ?
     `,
+    orgId,
     now,
     limit,
   )
+}
+
+// Resolve a snag's building/floor/location IDs into a human label like
+// "EC2 · L12 · Chiller Hall" from the org-scoped reference cache (cheap point
+// lookups on indexed primary keys). Returns null when nothing resolves.
+export const resolveLocationLabel = (
+  buildingId: number | null,
+  floorId: number | null,
+  locationId: number | null,
+): string | null => {
+  const parts: string[] = []
+  if (buildingId != null) {
+    const b = db.getFirstSync<{ code: string; name: string }>(
+      'SELECT code, name FROM buildings_local WHERE id = ?',
+      buildingId,
+    )
+    if (b) parts.push(b.code || b.name)
+  }
+  if (floorId != null) {
+    const f = db.getFirstSync<{ code: string; name: string; level: number | null }>(
+      'SELECT code, name, level FROM floors_local WHERE id = ?',
+      floorId,
+    )
+    if (f) parts.push(f.code || (f.level != null ? `L${f.level}` : f.name))
+  }
+  if (locationId != null) {
+    const l = db.getFirstSync<{ code: string; name: string }>(
+      'SELECT code, name FROM locations_local WHERE id = ?',
+      locationId,
+    )
+    if (l) parts.push(l.name || l.code)
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 /**
@@ -605,8 +939,22 @@ export const markAttachmentFailed = (localId: number, retries: number, nextRetry
   )
 }
 
-export const listAttachmentsForSnag = (snagServerId: number): LocalAttachmentRecord[] =>
-  db.getAllSync<LocalAttachmentRecord>(
+export const listAttachmentsForSnag = (snagServerId: number): LocalAttachmentRecord[] => {
+  const orgId = getActiveOrganizationId()
+  if (orgId !== null) {
+    return db.getAllSync<LocalAttachmentRecord>(
+      `
+        SELECT *
+        FROM attachments_local
+        WHERE snag_server_id = ?
+          AND organization_id = ?
+        ORDER BY datetime(created_at) DESC
+      `,
+      snagServerId,
+      orgId,
+    )
+  }
+  return db.getAllSync<LocalAttachmentRecord>(
     `
       SELECT *
       FROM attachments_local
@@ -615,6 +963,7 @@ export const listAttachmentsForSnag = (snagServerId: number): LocalAttachmentRec
     `,
     snagServerId,
   )
+}
 
 export const upsertServerBuildings = (rows: Array<Record<string, unknown>>) => {
   for (const row of rows) {
@@ -773,8 +1122,9 @@ export const upsertServerDrawingLocationZones = (rows: Array<Record<string, unkn
   }
 }
 
-export const listOfflineFloors = (projectId?: number | null): OfflineFloorMapRow[] =>
-  db.getAllSync<OfflineFloorMapRow>(
+export const listOfflineFloors = (projectId?: number | null): OfflineFloorMapRow[] => {
+  const orgId = getActiveOrganizationId()
+  return db.getAllSync<OfflineFloorMapRow>(
     `
       SELECT
         f.*,
@@ -791,15 +1141,20 @@ export const listOfflineFloors = (projectId?: number | null): OfflineFloorMapRow
         ) as open_snags
       FROM floors_local f
       INNER JOIN buildings_local b ON b.id = f.building_id
-      WHERE (? IS NULL OR f.project_id = ?)
+      WHERE (? IS NULL OR f.organization_id = ?)
+        AND (? IS NULL OR f.project_id = ?)
       ORDER BY f.project_id ASC, b.code ASC, COALESCE(f.level, 9999) ASC, COALESCE(f.sort_order, 9999) ASC, f.name ASC
     `,
+    orgId,
+    orgId,
     projectId ?? null,
     projectId ?? null,
   )
+}
 
-export const listOfflineFloorLocations = (floorId: number): OfflineFloorLocationRow[] =>
-  db.getAllSync<OfflineFloorLocationRow>(
+export const listOfflineFloorLocations = (floorId: number): OfflineFloorLocationRow[] => {
+  const orgId = getActiveOrganizationId()
+  return db.getAllSync<OfflineFloorLocationRow>(
     `
       SELECT
         l.*,
@@ -812,14 +1167,19 @@ export const listOfflineFloorLocations = (floorId: number): OfflineFloorLocation
         ) as open_snags
       FROM locations_local l
       WHERE l.floor_id = ?
+        AND (? IS NULL OR l.organization_id = ?)
       ORDER BY l.name ASC
       LIMIT 500
     `,
     floorId,
+    orgId,
+    orgId,
   )
+}
 
-export const listOfflineFloorZones = (floorId: number): OfflineFloorZoneRow[] =>
-  db.getAllSync<OfflineFloorZoneRow>(
+export const listOfflineFloorZones = (floorId: number): OfflineFloorZoneRow[] => {
+  const orgId = getActiveOrganizationId()
+  return db.getAllSync<OfflineFloorZoneRow>(
     `
       SELECT
         z.*,
@@ -836,15 +1196,21 @@ export const listOfflineFloorZones = (floorId: number): OfflineFloorZoneRow[] =>
       FROM floor_map_zones_local z
       INNER JOIN locations_local l ON l.id = z.location_id
       WHERE z.floor_id = ?
+        AND (? IS NULL OR z.organization_id = ?)
       ORDER BY z.priority DESC, z.id ASC
       LIMIT 1000
     `,
     floorId,
+    orgId,
+    orgId,
   )
+}
 
-export const findOfflineLocationByBarcode = (barcode: string): OfflineLocationLookupRow | null =>
-  db.getFirstSync<OfflineLocationLookupRow>(
-    `
+export const findOfflineLocationByBarcode = (barcode: string): OfflineLocationLookupRow | null => {
+  const orgId = getActiveOrganizationId()
+  return (
+    db.getFirstSync<OfflineLocationLookupRow>(
+      `
       SELECT
         l.id as location_id,
         l.name as location_name,
@@ -861,10 +1227,15 @@ export const findOfflineLocationByBarcode = (barcode: string): OfflineLocationLo
       INNER JOIN floors_local f ON f.id = l.floor_id
       INNER JOIN buildings_local b ON b.id = f.building_id
       WHERE LOWER(l.barcode) = LOWER(?)
+        AND (? IS NULL OR l.organization_id = ?)
       LIMIT 1
     `,
-    barcode.trim(),
-  ) ?? null
+      barcode.trim(),
+      orgId,
+      orgId,
+    ) ?? null
+  )
+}
 
 export const queueSyncConflict = (payload: {
   op_id: string
@@ -877,10 +1248,11 @@ export const queueSyncConflict = (payload: {
   db.runSync(
     `
       INSERT INTO sync_conflicts (
-        op_id, entity_type, entity_id, operation_type, local_payload, server_payload, status, resolution, created_at, resolved_at
+        op_id, organization_id, entity_type, entity_id, operation_type, local_payload, server_payload, status, resolution, created_at, resolved_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)
       ON CONFLICT(op_id) DO UPDATE SET
+        organization_id = excluded.organization_id,
         entity_type = excluded.entity_type,
         entity_id = excluded.entity_id,
         operation_type = excluded.operation_type,
@@ -891,6 +1263,7 @@ export const queueSyncConflict = (payload: {
         resolved_at = NULL
     `,
     payload.op_id,
+    getActiveOrganizationId(),
     payload.entity_type,
     payload.entity_id,
     payload.operation_type,
@@ -900,8 +1273,22 @@ export const queueSyncConflict = (payload: {
   )
 }
 
-export const listPendingSyncConflicts = (): SyncConflictRecord[] =>
-  db.getAllSync<SyncConflictRecord>(
+export const listPendingSyncConflicts = (): SyncConflictRecord[] => {
+  const orgId = getActiveOrganizationId()
+  if (orgId !== null) {
+    return db.getAllSync<SyncConflictRecord>(
+      `
+        SELECT *
+        FROM sync_conflicts
+        WHERE status = 'pending'
+          AND organization_id = ?
+        ORDER BY datetime(created_at) DESC
+        LIMIT 300
+      `,
+      orgId,
+    )
+  }
+  return db.getAllSync<SyncConflictRecord>(
     `
       SELECT *
       FROM sync_conflicts
@@ -910,11 +1297,19 @@ export const listPendingSyncConflicts = (): SyncConflictRecord[] =>
       LIMIT 300
     `,
   )
+}
 
 export const pendingSyncConflictsCount = (): number => {
-  const row = db.getFirstSync<{ total: number }>(
-    "SELECT COUNT(*) as total FROM sync_conflicts WHERE status = 'pending'",
-  )
+  const orgId = getActiveOrganizationId()
+  const row =
+    orgId !== null
+      ? db.getFirstSync<{ total: number }>(
+          "SELECT COUNT(*) as total FROM sync_conflicts WHERE status = 'pending' AND organization_id = ?",
+          orgId,
+        )
+      : db.getFirstSync<{ total: number }>(
+          "SELECT COUNT(*) as total FROM sync_conflicts WHERE status = 'pending'",
+        )
   return row?.total ?? 0
 }
 
@@ -937,9 +1332,10 @@ export const upsertServerEquipment = (equipmentRows: Array<Record<string, unknow
   for (const item of equipmentRows) {
     db.runSync(
       `
-        INSERT INTO equipment_local (id, code, name, status, barcode, project_id, location_id, notes, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO equipment_local (id, organization_id, code, name, status, barcode, project_id, location_id, notes, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          organization_id = excluded.organization_id,
           code = excluded.code,
           name = excluded.name,
           status = excluded.status,
@@ -950,6 +1346,7 @@ export const upsertServerEquipment = (equipmentRows: Array<Record<string, unknow
           updated_at = excluded.updated_at
       `,
       Number(item.id ?? 0),
+      (item.organization_id as number | null | undefined) ?? getActiveOrganizationId(),
       String(item.code ?? ''),
       String(item.name ?? ''),
       String(item.status ?? 'ok'),
@@ -966,9 +1363,10 @@ export const upsertServerEquipmentLogs = (logs: Array<Record<string, unknown>>) 
   for (const log of logs) {
     db.runSync(
       `
-        INSERT INTO equipment_logs_local (id, equipment_id, snag_id, status, description, action_taken, occurred_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO equipment_logs_local (id, organization_id, equipment_id, snag_id, status, description, action_taken, occurred_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          organization_id = excluded.organization_id,
           equipment_id = excluded.equipment_id,
           snag_id = excluded.snag_id,
           status = excluded.status,
@@ -978,6 +1376,7 @@ export const upsertServerEquipmentLogs = (logs: Array<Record<string, unknown>>) 
           updated_at = excluded.updated_at
       `,
       Number(log.id ?? 0),
+      (log.organization_id as number | null | undefined) ?? getActiveOrganizationId(),
       Number(log.equipment_id ?? 0),
       log.snag_id ? Number(log.snag_id) : null,
       String(log.status ?? 'ok'),
@@ -989,11 +1388,13 @@ export const upsertServerEquipmentLogs = (logs: Array<Record<string, unknown>>) 
   }
 }
 
-export const listEquipment = (): EquipmentRecord[] =>
-  db.getAllSync<EquipmentRecord>(
+export const listEquipment = (): EquipmentRecord[] => {
+  const orgId = getActiveOrganizationId()
+  return db.getAllSync<EquipmentRecord>(
     `
       SELECT *
       FROM equipment_local
+      WHERE (? IS NULL OR organization_id = ?)
       ORDER BY CASE status
         WHEN 'critical' THEN 1
         WHEN 'warn' THEN 2
@@ -1001,19 +1402,27 @@ export const listEquipment = (): EquipmentRecord[] =>
       END, datetime(updated_at) DESC
       LIMIT 500
     `,
+    orgId,
+    orgId,
   )
+}
 
-export const listEquipmentLogs = (equipmentId: number): EquipmentLogRecord[] =>
-  db.getAllSync<EquipmentLogRecord>(
+export const listEquipmentLogs = (equipmentId: number): EquipmentLogRecord[] => {
+  const orgId = getActiveOrganizationId()
+  return db.getAllSync<EquipmentLogRecord>(
     `
       SELECT *
       FROM equipment_logs_local
       WHERE equipment_id = ?
+        AND (? IS NULL OR organization_id = ?)
       ORDER BY datetime(occurred_at) DESC
       LIMIT 100
     `,
     equipmentId,
+    orgId,
+    orgId,
   )
+}
 
 export const parseQueuePayload = (operation: QueueOperationRecord): Record<string, unknown> =>
   parsePayload<Record<string, unknown>>(operation.payload)

@@ -3,17 +3,21 @@
 namespace App\Services;
 
 use App\Enums\SnagStatus;
+use App\Models\Area;
 use App\Models\MobileSyncProcessedOperation;
 use App\Models\Organization;
 use App\Models\RootCauseCategory;
 use App\Models\Snag;
+use App\Models\SnagCategory;
 use App\Models\SnagComment;
 use App\Models\SnagStatusHistory;
+use App\Models\StakeholderCompany;
 use App\Models\User;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class MobileSyncService
@@ -107,21 +111,40 @@ class MobileSyncService
      */
     private function handleSnagCreate(Organization $organization, User $actor, array $payload): array
     {
+        // DLP snags require a Cluster, a Taking-Over Certificate reference, a
+        // discipline (trade) and a description of at least 30 characters —
+        // the same contract SnagController::store enforces for the web app.
+        $isDlp = filter_var($payload['is_dlp'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        // Operational snags (e.g. raised during an inspection) carry no drawing/pin;
+        // construction snags still require them — mirrors SnagController::store.
+        $isOperational = ($payload['snag_type'] ?? null) === 'operational';
+
         $validator = validator($payload, [
             'client_uuid' => ['nullable', 'uuid'],
             'project_id' => ['required', 'integer', 'exists:projects,id'],
-            'drawing_id' => ['required', 'integer', 'exists:drawings,id'],
+            'drawing_id' => [$isOperational ? 'nullable' : 'required', 'integer', 'exists:drawings,id'],
             'drawing_revision_id' => ['nullable', 'integer', 'exists:drawing_revisions,id'],
             'building_id' => ['nullable', 'integer', 'exists:buildings,id'],
             'floor_id' => ['nullable', 'integer', 'exists:floors,id'],
             'location_id' => ['nullable', 'integer', 'exists:locations,id'],
             'root_cause_category_id' => ['nullable', 'integer', 'exists:root_cause_categories,id'],
+            'category_id' => ['nullable', 'integer', 'exists:snag_categories,id'],
+            'source_organization_id' => ['nullable', 'integer', 'exists:stakeholder_companies,id'],
+            'inspection_submission_id' => ['nullable', 'integer', 'exists:inspection_submissions,id'],
+            'area_id' => ['nullable', 'integer', 'exists:areas,id'],
+            'location_text' => ['nullable', 'string', 'max:255'],
+            'snag_type' => ['nullable', 'in:construction,operational'],
             'equipment_id' => ['nullable', 'integer', 'exists:equipments,id'],
             'title' => ['required', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
+            'description' => $isDlp ? ['required', 'string', 'min:30'] : ['nullable', 'string'],
             'priority' => ['nullable', 'in:low,medium,high,critical'],
-            'pin_x' => ['required', 'numeric', 'min:0', 'max:1'],
-            'pin_y' => ['required', 'numeric', 'min:0', 'max:1'],
+            'severity' => ['nullable', 'in:major,high,medium,low'],
+            'trade' => ['nullable', 'string', 'max:120', Rule::requiredIf($isDlp)],
+            'is_dlp' => ['nullable', 'boolean'],
+            'cluster' => ['nullable', 'string', 'max:160', Rule::requiredIf($isDlp)],
+            'toc_reference' => ['nullable', 'string', 'max:120', Rule::requiredIf($isDlp)],
+            'pin_x' => [$isOperational ? 'nullable' : 'required', 'numeric', 'min:0', 'max:1'],
+            'pin_y' => [$isOperational ? 'nullable' : 'required', 'numeric', 'min:0', 'max:1'],
             'assigned_to' => ['nullable', 'integer', 'exists:users,id'],
             'due_date' => ['nullable', 'date'],
             'estimated_cost' => ['nullable', 'numeric', 'min:0'],
@@ -141,6 +164,40 @@ class MobileSyncService
                     'root_cause_category_id' => ['Root cause category does not belong to this organization.'],
                 ]);
             }
+        }
+
+        if (! empty($validated['category_id'])) {
+            $snagCategory = SnagCategory::query()->findOrFail((int) $validated['category_id']);
+            if ($snagCategory->organization_id !== $organization->id) {
+                throw ValidationException::withMessages([
+                    'category_id' => ['Snag category does not belong to this organization.'],
+                ]);
+            }
+        }
+
+        if (! empty($validated['area_id'])) {
+            $area = Area::query()->findOrFail((int) $validated['area_id']);
+            if ($area->organization_id !== $organization->id) {
+                throw ValidationException::withMessages([
+                    'area_id' => ['Area does not belong to this organization.'],
+                ]);
+            }
+        }
+
+        if (! empty($validated['source_organization_id'])) {
+            $sourceOrg = StakeholderCompany::query()->findOrFail((int) $validated['source_organization_id']);
+            if ($sourceOrg->organization_id !== $organization->id) {
+                throw ValidationException::withMessages([
+                    'source_organization_id' => ['Source organization does not belong to this organization.'],
+                ]);
+            }
+        }
+
+        // Derive severity from priority when the client omits it (mirrors SnagController).
+        if (empty($validated['severity'])) {
+            $validated['severity'] = [
+                'critical' => 'major', 'high' => 'high', 'medium' => 'medium', 'low' => 'low',
+            ][$validated['priority'] ?? 'medium'] ?? 'medium';
         }
 
         if (! empty($validated['client_uuid'])) {
@@ -202,6 +259,10 @@ class MobileSyncService
             'title' => ['sometimes', 'required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'priority' => ['sometimes', 'required', 'in:low,medium,high,critical'],
+            'trade' => ['nullable', 'string', 'max:120'],
+            'is_dlp' => ['sometimes', 'boolean'],
+            'cluster' => ['nullable', 'string', 'max:160'],
+            'toc_reference' => ['nullable', 'string', 'max:120'],
             'pin_x' => ['sometimes', 'required', 'numeric', 'min:0', 'max:1'],
             'pin_y' => ['sometimes', 'required', 'numeric', 'min:0', 'max:1'],
             'assigned_to' => ['nullable', 'integer', 'exists:users,id'],
@@ -266,6 +327,10 @@ class MobileSyncService
             'title' => $validated['title'] ?? $snag->title,
             'description' => array_key_exists('description', $validated) ? $validated['description'] : $snag->description,
             'priority' => $validated['priority'] ?? $snag->priority,
+            'trade' => array_key_exists('trade', $validated) ? $validated['trade'] : $snag->trade,
+            'is_dlp' => array_key_exists('is_dlp', $validated) ? $validated['is_dlp'] : $snag->is_dlp,
+            'cluster' => array_key_exists('cluster', $validated) ? $validated['cluster'] : $snag->cluster,
+            'toc_reference' => array_key_exists('toc_reference', $validated) ? $validated['toc_reference'] : $snag->toc_reference,
             'pin_x' => $validated['pin_x'] ?? $snag->pin_x,
             'pin_y' => $validated['pin_y'] ?? $snag->pin_y,
             'assigned_to' => array_key_exists('assigned_to', $validated) ? $validated['assigned_to'] : $snag->assigned_to,
