@@ -4,7 +4,6 @@ import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { CreateSnagDialog } from '../components/CreateSnagDialog';
 import { SnagDrawer } from '../components/SnagDrawer';
 import { PageHero } from '../components/ui/PageHero';
 import { StatCard } from '../components/ui/StatCard';
@@ -90,7 +89,6 @@ export const DrawingViewerPage = () => {
     const [members, setMembers] = useState([]);
     const [companies, setCompanies] = useState([]);
     const [teams, setTeams] = useState([]);
-    const [rootCauseCategories, setRootCauseCategories] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [statusFilter, setStatusFilter] = useState('');
@@ -100,10 +98,8 @@ export const DrawingViewerPage = () => {
     const [resolvingBarcode, setResolvingBarcode] = useState(false);
     const [pinDraft, setPinDraft] = useState(null);
     const [zoom, setZoom] = useState(100);
-    const [createDialogOpen, setCreateDialogOpen] = useState(false);
     const [selectedSnagId, setSelectedSnagId] = useState(null);
     const [locationSuggestions, setLocationSuggestions] = useState([]);
-    const [suggestedLocation, setSuggestedLocation] = useState(null);
     const [migrationPreview, setMigrationPreview] = useState(null);
     const [migrationLoading, setMigrationLoading] = useState(false);
     const [selectedSnagIds, setSelectedSnagIds] = useState([]);
@@ -172,15 +168,6 @@ export const DrawingViewerPage = () => {
         setCompanies(companiesResponse.data.data);
         setTeams(teamsResponse.data.data);
     }, []);
-    const loadRootCauseCategories = useCallback(async () => {
-        try {
-            const response = await api.get('/api/root-cause-categories');
-            setRootCauseCategories(response.data.data);
-        }
-        catch {
-            setRootCauseCategories([]);
-        }
-    }, []);
     const loadDrawing = useCallback(async (id) => {
         const response = await api.get(`/api/drawings/${id}`);
         const resolved = response.data.data;
@@ -226,7 +213,7 @@ export const DrawingViewerPage = () => {
             setError(null);
             try {
                 const loadedProject = await loadProject();
-                await Promise.all([loadMembers(loadedProject.id), loadStakeholders(loadedProject.id), loadRootCauseCategories()]);
+                await Promise.all([loadMembers(loadedProject.id), loadStakeholders(loadedProject.id)]);
             }
             catch (requestError) {
                 setError(normalizeApiError(requestError, 'Unable to load project data.'));
@@ -236,7 +223,7 @@ export const DrawingViewerPage = () => {
             }
         };
         void run();
-    }, [loadMembers, loadProject, loadRootCauseCategories, loadStakeholders]);
+    }, [loadMembers, loadProject, loadStakeholders]);
     useEffect(() => {
         if (!selectedDrawingId) {
             return;
@@ -509,22 +496,14 @@ export const DrawingViewerPage = () => {
                     limit: 5,
                 },
             });
-            const suggestions = response.data.data.suggestions;
-            setLocationSuggestions(suggestions);
-            const best = suggestions[0];
-            setSuggestedLocation(best
-                ? {
-                    location_id: best.location_id,
-                    reason: locationReasonLabel(best.source),
-                    score: best.score,
-                }
-                : null);
+            setLocationSuggestions(response.data.data.suggestions);
         }
         catch {
             setLocationSuggestions([]);
-            setSuggestedLocation(null);
         }
     }, [drawing, selectedRevisionId]);
+    // Clicking the plan drops a preview pin and asks the server for the mapped
+    // location; the "Create snag" action then opens the full New snag page.
     const onCanvasClick = (event) => {
         if (!canCreateSnag) {
             return;
@@ -534,71 +513,23 @@ export const DrawingViewerPage = () => {
         const y = (event.clientY - rect.top) / rect.height;
         const nextPin = { x: Number(x.toFixed(6)), y: Number(y.toFixed(6)) };
         setPinDraft(nextPin);
-        setCreateDialogOpen(true);
         void suggestLocationForPin(nextPin.x, nextPin.y);
     };
-    const createSnag = async (payload) => {
-        if (!drawing || !project) {
+    const openCreatePage = useCallback((forPin) => {
+        const targetPin = forPin ?? pinDraft;
+        if (!drawing || !targetPin) {
             return;
         }
-        try {
-            const location = locationOptions.find((item) => item.id === payload.location_id);
-            const floor = location ? floorOptions.find((item) => item.id === location.floor_id) : null;
-            const response = await api.post('/api/snags', {
-                project_id: project.id,
-                drawing_id: drawing.id,
-                drawing_revision_id: selectedRevisionId ?? drawing.current_revision_id,
-                building_id: payload.building_id ?? drawing.building_id,
-                area_id: payload.area_id,
-                floor_id: floor?.id ?? drawing.floor_id,
-                location_id: payload.location_id,
-                location_text: payload.location_text,
-                title: payload.title,
-                description: payload.description,
-                priority: payload.priority,
-                severity: payload.severity,
-                category_id: payload.category_id,
-                trade: payload.trade,
-                is_dlp: payload.is_dlp,
-                cluster: payload.cluster,
-                toc_reference: payload.toc_reference,
-                taking_over_certificate_id: payload.taking_over_certificate_id,
-                assigned_to: payload.assigned_to,
-                assigned_company_id: payload.assigned_company_id,
-                assigned_team_id: payload.assigned_team_id,
-                root_cause_category_id: payload.root_cause_category_id,
-                estimated_cost: payload.estimated_cost,
-                estimated_hours: payload.estimated_hours,
-                pin_x: payload.pin_x,
-                pin_y: payload.pin_y,
-            });
-            // Upload the evidence photos captured in the dialog (required for DLP snags).
-            const createdSnag = response.data?.data;
-            const photos = Array.isArray(payload.photos) ? payload.photos : [];
-            let photoUploadFailed = false;
-            if (createdSnag?.id && photos.length > 0) {
-                for (const file of photos) {
-                    const form = new FormData();
-                    form.append('type', 'photo');
-                    form.append('file', file);
-                    try {
-                        await api.post(`/api/snags/${createdSnag.id}/attachments`, form);
-                    }
-                    catch {
-                        photoUploadFailed = true;
-                    }
-                }
-            }
-            await loadSnags(drawing.id, selectedRevisionId);
-            if (photoUploadFailed) {
-                setError(inlineError('Snag created, but one or more photos failed to upload. You can add them from the snag.'));
-            }
+        const query = new URLSearchParams({
+            drawing_id: String(drawing.id),
+            pin_x: String(targetPin.x),
+            pin_y: String(targetPin.y),
+        });
+        if (selectedRevisionId) {
+            query.set('revision_id', String(selectedRevisionId));
         }
-        catch (requestError) {
-            setError(normalizeApiError(requestError, 'Unable to create snag from the selected pin.'));
-            throw requestError;
-        }
-    };
+        navigate(`/projects/${projectId}/snags/new?${query.toString()}`);
+    }, [drawing, navigate, pinDraft, projectId, selectedRevisionId]);
     const runBulkUpdate = useCallback(async () => {
         if (!drawing || selectedSnagIds.length === 0) {
             return;
@@ -716,14 +647,11 @@ export const DrawingViewerPage = () => {
         if (!selectedRevisionId) {
             return 1;
         }
-        if (!pinDraft && !createDialogOpen) {
+        if (!pinDraft) {
             return 2;
         }
-        if (createDialogOpen) {
-            return 3;
-        }
-        return 4;
-    }, [createDialogOpen, pinDraft, selectedRevisionId]);
+        return 3;
+    }, [pinDraft, selectedRevisionId]);
     const guidedHint = useMemo(() => {
         if (guidedStep === 1) {
             return 'Step 1: Choose a drawing revision to start plotting snags.';
@@ -733,10 +661,7 @@ export const DrawingViewerPage = () => {
                 ? 'Step 2: Click anywhere on the drawing to drop a pin.'
                 : 'You need snags.create permission to place a pin.';
         }
-        if (guidedStep === 3) {
-            return 'Step 3: Fill the quick snag form and save.';
-        }
-        return 'Step 4: Optionally assign, set due date, or use advanced tools.';
+        return 'Step 3: Open the New snag form to complete the details.';
     }, [canCreateSnag, guidedStep]);
     return (<Stack spacing={2}>
       {error && (<Alert severity="error" action={<Button color="inherit" size="small" onClick={() => {
@@ -770,10 +695,14 @@ export const DrawingViewerPage = () => {
           <Chip color={guidedStep === 1 ? 'primary' : 'default'} label="1. Select revision"/>
           <Chip color={guidedStep === 2 ? 'primary' : 'default'} label="2. Place pin"/>
           <Chip color={guidedStep === 3 ? 'primary' : 'default'} label="3. Create snag"/>
-          <Chip color={guidedStep === 4 ? 'primary' : 'default'} label="4. Assign / follow up"/>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
             {guidedHint}
           </Typography>
+          {pinDraft && canCreateSnag && (
+            <Button variant="contained" size="small" onClick={() => openCreatePage()} sx={{ whiteSpace: 'nowrap' }}>
+              Create snag →
+            </Button>
+          )}
         </Stack>
       </Paper>
 
@@ -1371,13 +1300,6 @@ export const DrawingViewerPage = () => {
             .map((value) => Number(value))
             .filter((value) => Number.isFinite(value)))} pageSizeOptions={[10, 20, 50]} onRowClick={(params) => setSelectedSnagId(params.row.id)} sx={{ border: 0 }}/>
       </Paper>
-
-      {drawing && (<CreateSnagDialog open={createDialogOpen} drawing={drawing} revision={selectedRevision} locationOptions={locationOptions} rootCauseCategories={rootCauseCategories} members={members} companies={companies} teams={teams} canAssign={projectPermissions.includes('snags.assign')} canManageToc={projectPermissions.includes('toc.manage')} pin={pinDraft} suggestedLocation={suggestedLocation} onClose={() => {
-                setCreateDialogOpen(false);
-                setPinDraft(null);
-                setLocationSuggestions([]);
-                setSuggestedLocation(null);
-            }} onCreate={createSnag}/>)}
 
       <SnagDrawer snagId={selectedSnagId} members={members} companies={companies} teams={teams} canTransition={projectPermissions.includes('snags.transition')} canAssign={projectPermissions.includes('snags.assign')} canComment={projectPermissions.includes('snags.comment')} canAttach={projectPermissions.includes('snags.attach')} canCloseoutView={projectPermissions.includes('closeout.instances.view')} canCloseoutUpdate={projectPermissions.includes('closeout.instances.update')} canCloseoutReview={projectPermissions.includes('closeout.review')} onClose={() => setSelectedSnagId(null)} onChanged={async () => {
             if (selectedDrawingId) {

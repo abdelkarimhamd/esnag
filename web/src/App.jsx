@@ -33,6 +33,7 @@ const WorkflowConfigPage = lazy(() => import('./pages/WorkflowConfigPage').then(
 const AuditTrailPage = lazy(() => import('./pages/AuditTrailPage').then((module) => ({ default: module.AuditTrailPage })));
 const DrawingOverlayPage = lazy(() => import('./pages/DrawingOverlayPage').then((module) => ({ default: module.DrawingOverlayPage })));
 const AdvancedSearchPage = lazy(() => import('./pages/AdvancedSearchPage').then((module) => ({ default: module.AdvancedSearchPage })));
+const CreateSnagPage = lazy(() => import('./pages/CreateSnagPage').then((module) => ({ default: module.CreateSnagPage })));
 const LazyPageFallback = <div style={{ padding: 16 }}>Loading module...</div>;
 function App() {
     return (<Router>
@@ -60,6 +61,11 @@ function App() {
               </PermissionRoute>}/>
           <Route path="projects/:projectId/drawings/:drawingId" element={<PermissionRoute requiredAny={FEATURE_ACCESS.drawingViewer.anyOf}>
                 <DrawingViewerPage />
+              </PermissionRoute>}/>
+          <Route path="projects/:projectId/snags/new" element={<PermissionRoute requiredAny={FEATURE_ACCESS.createSnag.anyOf}>
+                <Suspense fallback={LazyPageFallback}>
+                  <CreateSnagPage />
+                </Suspense>
               </PermissionRoute>}/>
           <Route path="overlay" element={<PermissionRoute requiredAny={FEATURE_ACCESS.drawingOverlay.anyOf}>
                 <Suspense fallback={LazyPageFallback}>

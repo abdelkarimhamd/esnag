@@ -129,7 +129,6 @@ describe('DrawingViewerPage', () => {
         expect(screen.getByText('1. Select revision')).not.toBeNull();
         expect(screen.getByText('2. Place pin')).not.toBeNull();
         expect(screen.getByText('3. Create snag')).not.toBeNull();
-        expect(screen.getByText('4. Assign / follow up')).not.toBeNull();
 
         const advancedToolsToggle = screen.getByRole('button', { name: /Advanced Tools \(Compare, Migration, Barcode\)/ });
         const advancedBulkToggle = screen.getByRole('button', { name: /Advanced Snag Actions/ });
