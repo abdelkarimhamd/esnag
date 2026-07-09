@@ -31,6 +31,7 @@ const MasterDataPage = lazy(() => import('./pages/MasterDataPage').then((module)
 const HandoverRequestsPage = lazy(() => import('./pages/HandoverRequestsPage').then((module) => ({ default: module.HandoverRequestsPage })));
 const WorkflowConfigPage = lazy(() => import('./pages/WorkflowConfigPage').then((module) => ({ default: module.WorkflowConfigPage })));
 const AuditTrailPage = lazy(() => import('./pages/AuditTrailPage').then((module) => ({ default: module.AuditTrailPage })));
+const DrawingOverlayPage = lazy(() => import('./pages/DrawingOverlayPage').then((module) => ({ default: module.DrawingOverlayPage })));
 const LazyPageFallback = <div style={{ padding: 16 }}>Loading module...</div>;
 function App() {
     return (<Router>
@@ -53,6 +54,11 @@ function App() {
               </PermissionRoute>}/>
           <Route path="projects/:projectId/drawings/:drawingId" element={<PermissionRoute requiredAny={FEATURE_ACCESS.drawingViewer.anyOf}>
                 <DrawingViewerPage />
+              </PermissionRoute>}/>
+          <Route path="overlay" element={<PermissionRoute requiredAny={FEATURE_ACCESS.drawingOverlay.anyOf}>
+                <Suspense fallback={LazyPageFallback}>
+                  <DrawingOverlayPage />
+                </Suspense>
               </PermissionRoute>}/>
           <Route path="board" element={<PermissionRoute requiredAny={FEATURE_ACCESS.board.anyOf}>
                 <KanbanBoardPage />

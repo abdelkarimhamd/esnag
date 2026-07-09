@@ -34,6 +34,7 @@ const RAIL_ITEMS = [
   { key: 'home', to: '/home', labelKey: 'nav.home', fallback: 'Home', icon: HomeRoundedIcon },
   { key: 'board', to: '/board', feature: 'board', labelKey: 'nav.board', fallback: 'Board', icon: ViewKanbanRoundedIcon },
   { key: 'drawings', to: '/projects', feature: 'projects', labelKey: 'nav.drawings', fallback: 'Drawings', icon: LayersRoundedIcon, id: 'projects-nav' },
+  { key: 'overlay', to: '/overlay', feature: 'drawingOverlay', labelKey: 'nav.overlay', fallback: 'Overlay', icon: ApartmentRoundedIcon },
   { key: 'equipment', to: '/equipment', feature: 'equipment', labelKey: 'nav.equipment', fallback: 'Equipment', icon: ViewInArRoundedIcon },
   { key: 'inspect', to: '/inspections/submissions', feature: 'inspectionsSubmissions', labelKey: 'nav.inspect', fallback: 'Inspect', icon: FactCheckRoundedIcon },
   { key: 'commissioning', to: '/commissioning', feature: 'commissioning', labelKey: 'nav.commissioning', fallback: 'T&C', icon: AssignmentTurnedInRoundedIcon },
