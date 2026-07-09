@@ -40,6 +40,16 @@ export interface StakeholderSummary {
   code?: string | null
 }
 
+export interface SnagInspectionRequestRow {
+  id: number
+  reference: string | null
+  title: string
+  status: string
+  team?: { id: number; name: string } | null
+  assignee?: { id: number; name: string } | null
+  requester?: { id: number; name: string } | null
+}
+
 export interface SnagInspectionRow {
   id: number
   reference: string | null

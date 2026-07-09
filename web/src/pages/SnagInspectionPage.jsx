@@ -55,9 +55,51 @@ export const SnagInspectionPage = () => {
   const [photos, setPhotos] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  // Request-an-inspection form (assign a responsible team/person)
+  const [reqTitle, setReqTitle] = useState('');
+  const [reqTeamId, setReqTeamId] = useState('');
+  const [reqUserId, setReqUserId] = useState('');
+  const [requesting, setRequesting] = useState(false);
 
   const canInspect = projectPermissions.includes('snags.comment');
   const projectId = snag?.project_id ?? null;
+
+  const loadRequests = useCallback(async () => {
+    if (!snagId) return;
+    try {
+      const response = await api.get(`/api/snags/${snagId}/inspection-requests`);
+      setRequests(response.data.data ?? []);
+    }
+    catch { setRequests([]); }
+  }, [snagId]);
+
+  const createRequest = async () => {
+    if (!reqTeamId && !reqUserId) {
+      setError({ message: 'Assign the inspection request to a team or a person.' });
+      return;
+    }
+    setRequesting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await api.post(`/api/snags/${snagId}/inspection-requests`, {
+        title: reqTitle.trim() || undefined,
+        stakeholder_team_id: reqTeamId ? Number(reqTeamId) : undefined,
+        assigned_to: reqUserId ? Number(reqUserId) : undefined,
+      });
+      setReqTitle('');
+      setReqTeamId('');
+      setReqUserId('');
+      await loadRequests();
+      setMessage(`Inspection requested (${response.data.data.reference}) — the assigned team can now inspect.`);
+    }
+    catch (requestError) {
+      setError(normalizeApiError(requestError, 'Unable to request the inspection.'));
+    }
+    finally {
+      setRequesting(false);
+    }
+  };
 
   const loadInspections = useCallback(async () => {
     if (!snagId) return;
@@ -79,19 +121,18 @@ export const SnagInspectionPage = () => {
         const loadedSnag = snagResponse.data.data;
         setSnag(loadedSnag);
         const pid = loadedSnag.project_id;
-        const [eq, comp, tm, mem, req] = await Promise.all([
+        const [eq, comp, tm, mem] = await Promise.all([
           api.get('/api/equipment', { params: { project_id: pid, per_page: 200 } }).catch(() => ({ data: { data: [] } })),
           api.get('/api/stakeholders/companies', { params: { project_id: pid } }).catch(() => ({ data: { data: [] } })),
           api.get('/api/stakeholders/teams', { params: { project_id: pid } }).catch(() => ({ data: { data: [] } })),
           api.get('/api/organizations/members', { params: { project_id: pid } }).catch(() => ({ data: { data: [] } })),
-          api.get('/api/inspections/requests', { params: { project_id: pid } }).catch(() => ({ data: { data: [] } })),
         ]);
         if (cancelled) return;
         setEquipment(eq.data.data ?? []);
         setCompanies(comp.data.data ?? []);
         setTeams(tm.data.data ?? []);
         setMembers(mem.data.data ?? []);
-        setRequests(req.data.data ?? []);
+        await loadRequests();
         await loadInspections();
       }
       catch (requestError) {
@@ -103,7 +144,7 @@ export const SnagInspectionPage = () => {
     };
     void run();
     return () => { cancelled = true; };
-  }, [snagId, loadInspections]);
+  }, [snagId, loadInspections, loadRequests]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -166,6 +207,7 @@ export const SnagInspectionPage = () => {
         catch { uploadFailed = true; }
       }
       await loadInspections();
+      await loadRequests();
       resetForm();
       setMessage(uploadFailed
         ? `Inspection ${created.reference} recorded, but one or more files failed to upload.`
@@ -226,27 +268,60 @@ export const SnagInspectionPage = () => {
             </Paper>
 
             <Paper sx={{ p: 2 }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Request to inspect</Typography>
-              <FormControl fullWidth size="small">
-                <InputLabel id="req-label">Answering request</InputLabel>
-                <Select labelId="req-label" label="Answering request" value={requestId} onChange={(e) => setRequestId(e.target.value)}>
-                  <MenuItem value="">None</MenuItem>
-                  {requests.map((r) => (
-                    <MenuItem key={r.id} value={String(r.id)}>{r.reference ? `${r.reference} — ` : ''}{r.title}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              {selectedRequest ? (
-                <Box sx={{ mt: 1.5 }}>
-                  <InfoRow label="Reference"><Box component="span" sx={{ fontFamily: FONT_MONO }}>{selectedRequest.reference}</Box></InfoRow>
-                  <InfoRow label="Status"><Chip size="small" variant="outlined" label={formatStatusLabel(selectedRequest.status)} /></InfoRow>
-                  <InfoRow label="Assigned team">{selectedRequest.team?.name ?? '—'}</InfoRow>
-                  {selectedRequest.description && <InfoRow label="Details">{selectedRequest.description}</InfoRow>}
-                </Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Request an inspection</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                Assign a responsible team or person; they receive the request, then record the inspection below.
+              </Typography>
+              <Stack spacing={1.5}>
+                <TextField size="small" label="What to inspect (optional)" value={reqTitle} onChange={(e) => setReqTitle(e.target.value)} placeholder="e.g. Rooftop AHU condition" fullWidth />
+                <FormControl size="small" fullWidth>
+                  <InputLabel id="req-team">Assign team</InputLabel>
+                  <Select labelId="req-team" label="Assign team" value={reqTeamId} onChange={(e) => setReqTeamId(e.target.value)}>
+                    <MenuItem value="">None</MenuItem>
+                    {teams.map((t) => <MenuItem key={t.id} value={String(t.id)}>{t.name}</MenuItem>)}
+                  </Select>
+                </FormControl>
+                <FormControl size="small" fullWidth>
+                  <InputLabel id="req-user">Assign person</InputLabel>
+                  <Select labelId="req-user" label="Assign person" value={reqUserId} onChange={(e) => setReqUserId(e.target.value)}>
+                    <MenuItem value="">None</MenuItem>
+                    {members.map((m) => <MenuItem key={m.id} value={String(m.id)}>{m.name}</MenuItem>)}
+                  </Select>
+                </FormControl>
+                <Button variant="outlined" size="small" onClick={() => void createRequest()} disabled={requesting || !canInspect || (!reqTeamId && !reqUserId)} sx={{ alignSelf: 'flex-start' }}>
+                  {requesting ? 'Requesting…' : 'Request inspection'}
+                </Button>
+              </Stack>
+
+              <Divider sx={{ my: 1.75 }} />
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Received requests ({requests.length})</Typography>
+              {requests.length === 0 ? (
+                <Typography variant="caption" color="text.secondary">No inspection requested yet.</Typography>
               ) : (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                  Optionally link the request that asked for this inspection.
-                </Typography>
+                <Stack spacing={1} divider={<Divider flexItem />}>
+                  {requests.map((r) => {
+                    const done = r.status === 'completed' || r.status === 'cancelled';
+                    const answering = String(requestId) === String(r.id);
+                    return (
+                      <Box key={r.id}>
+                        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                          <Box component="span" sx={{ fontFamily: FONT_MONO, fontSize: 12, fontWeight: 700, color: BRAND.navy }}>{r.reference}</Box>
+                          <Chip size="small" variant="outlined" label={formatStatusLabel(r.status)} color={r.status === 'completed' ? 'success' : 'default'} />
+                          <Box sx={{ flex: 1 }} />
+                          {!done && (
+                            <Button size="small" variant={answering ? 'contained' : 'text'} onClick={() => setRequestId(answering ? '' : String(r.id))}>
+                              {answering ? 'Answering ✓' : 'Do this inspection'}
+                            </Button>
+                          )}
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.3 }}>
+                          {r.title} · assigned to {r.team?.name ?? r.assignee?.name ?? 'unassigned'}
+                          {r.requester?.name ? ` · by ${r.requester.name}` : ''}
+                        </Typography>
+                      </Box>
+                    );
+                  })}
+                </Stack>
               )}
             </Paper>
           </Stack>
@@ -259,6 +334,12 @@ export const SnagInspectionPage = () => {
             {!canInspect && <Alert severity="warning" sx={{ mb: 2 }}>You need snag comment permission on this project to record an inspection.</Alert>}
 
             <Stack spacing={2}>
+              {selectedRequest && (
+                <Alert severity="info" sx={{ py: 0.5 }} onClose={() => setRequestId('')}>
+                  Answering request <b>{selectedRequest.reference}</b>
+                  {selectedRequest.team?.name || selectedRequest.assignee?.name ? ` (assigned to ${selectedRequest.team?.name ?? selectedRequest.assignee?.name})` : ''} — recording will complete it.
+                </Alert>
+              )}
               <FormControl fullWidth size="small">
                 <InputLabel id="status-label">Status / condition</InputLabel>
                 <Select labelId="status-label" label="Status / condition" value={status} onChange={(e) => setStatus(e.target.value)}>

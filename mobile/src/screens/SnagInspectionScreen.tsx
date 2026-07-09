@@ -8,7 +8,7 @@ import { apiClient, normalizeMobileApiError } from '../api/client'
 import { useAuth } from '../providers/AuthProvider'
 import { useAppTheme } from '../theme/ThemeProvider'
 import type { SnagsStackParamList } from '../navigation/types'
-import type { AssetSummary, OrganizationMemberRecord, SnagInspectionRow, StakeholderSummary } from '../types'
+import type { AssetSummary, OrganizationMemberRecord, SnagInspectionRequestRow, SnagInspectionRow, StakeholderSummary } from '../types'
 
 type Props = NativeStackScreenProps<SnagsStackParamList, 'SnagInspection'>
 
@@ -34,8 +34,15 @@ export const SnagInspectionScreen = ({ route }: Props) => {
   const [teams, setTeams] = useState<StakeholderSummary[]>([])
   const [members, setMembers] = useState<OrganizationMemberRecord[]>([])
   const [history, setHistory] = useState<SnagInspectionRow[]>([])
+  const [requests, setRequests] = useState<SnagInspectionRequestRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Request-an-inspection form (assign a responsible team/person)
+  const [reqTeamId, setReqTeamId] = useState<number | null>(null)
+  const [reqUserId, setReqUserId] = useState<number | null>(null)
+  const [requesting, setRequesting] = useState(false)
+  const [answeringRequestId, setAnsweringRequestId] = useState<number | null>(null)
 
   const [status, setStatus] = useState('operational')
   const [assetId, setAssetId] = useState<number | null>(null)
@@ -56,6 +63,16 @@ export const SnagInspectionScreen = ({ route }: Props) => {
     }
   }, [token, activeOrganization?.id, snagServerId])
 
+  const loadRequests = useCallback(async () => {
+    if (!token || !activeOrganization) return
+    try {
+      const response = await apiClient.listSnagInspectionRequests(token, activeOrganization.id, snagServerId)
+      setRequests(response.data)
+    } catch {
+      setRequests([])
+    }
+  }, [token, activeOrganization?.id, snagServerId])
+
   const load = useCallback(async () => {
     if (!token || !activeOrganization) return
     setLoading(true)
@@ -70,6 +87,7 @@ export const SnagInspectionScreen = ({ route }: Props) => {
       setCompanies(companiesRes.data)
       setTeams(teamsRes.data)
       setMembers(membersRes.data)
+      await loadRequests()
       await loadHistory()
       setError(null)
     } catch (e) {
@@ -77,7 +95,30 @@ export const SnagInspectionScreen = ({ route }: Props) => {
     } finally {
       setLoading(false)
     }
-  }, [token, activeOrganization?.id, projectId, loadHistory])
+  }, [token, activeOrganization?.id, projectId, loadHistory, loadRequests])
+
+  const requestInspection = async () => {
+    if (!token || !activeOrganization) return
+    if (!reqTeamId && !reqUserId) {
+      Alert.alert('Assign it', 'Assign the request to a team or a person first.')
+      return
+    }
+    setRequesting(true)
+    try {
+      await apiClient.createSnagInspectionRequest(token, activeOrganization.id, snagServerId, {
+        stakeholder_team_id: reqTeamId ?? undefined,
+        assigned_to: reqUserId ?? undefined,
+      })
+      setReqTeamId(null)
+      setReqUserId(null)
+      await loadRequests()
+      Alert.alert('Requested', 'Inspection requested — the assigned team can now inspect.')
+    } catch (e) {
+      setError(normalizeMobileApiError(e, 'Unable to request the inspection.').message)
+    } finally {
+      setRequesting(false)
+    }
+  }
 
   useFocusEffect(useCallback(() => { void load() }, [load]))
 
@@ -123,6 +164,7 @@ export const SnagInspectionScreen = ({ route }: Props) => {
       if (ownerType === 'company' && ownerId) body.maintenance_company_id = ownerId
       if (ownerType === 'team' && ownerId) body.maintenance_team_id = ownerId
       if (ownerType === 'user' && ownerId) body.maintenance_user_id = ownerId
+      if (answeringRequestId) body.inspection_request_id = answeringRequestId
 
       const response = await apiClient.createSnagInspection(token, activeOrganization.id, snagServerId, body)
       const created = response.data
@@ -141,6 +183,8 @@ export const SnagInspectionScreen = ({ route }: Props) => {
       setOwnerId(null)
       setNotes('')
       setPhotos([])
+      setAnsweringRequestId(null)
+      await loadRequests()
       await loadHistory()
       Alert.alert('Recorded', `Inspection ${created.reference ?? ''} saved.`)
     } catch (e) {
@@ -183,8 +227,66 @@ export const SnagInspectionScreen = ({ route }: Props) => {
           <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={theme.colors.primary} /></View>
         ) : (
           <>
+            {/* Request an inspection (assign a responsible team/person) */}
+            <Text style={sectionLabel}>REQUEST INSPECTION — ASSIGN TEAM</Text>
+            <View style={styles.row}>
+              {teams.map((team) => {
+                const on = reqTeamId === team.id
+                return (
+                  <Pressable key={team.id} onPress={() => { setReqTeamId(on ? null : team.id); if (!on) setReqUserId(null) }} style={chip(on)}>
+                    <Text style={chipText(on)}>{team.name}</Text>
+                  </Pressable>
+                )
+              })}
+              {teams.length === 0 ? <Text style={{ fontFamily: theme.fonts.sans, fontSize: 12, color: theme.colors.textMuted }}>No teams.</Text> : null}
+            </View>
+            <Text style={sectionLabel}>OR ASSIGN PERSON</Text>
+            <View style={styles.row}>
+              {members.map((member) => {
+                const on = reqUserId === member.id
+                return (
+                  <Pressable key={member.id} onPress={() => { setReqUserId(on ? null : member.id); if (!on) setReqTeamId(null) }} style={chip(on)}>
+                    <Text style={chipText(on)}>{member.name}</Text>
+                  </Pressable>
+                )
+              })}
+            </View>
+            <Pressable
+              onPress={() => void requestInspection()}
+              disabled={requesting || (!reqTeamId && !reqUserId)}
+              style={{ alignSelf: 'flex-start', marginTop: 2, marginBottom: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.primary, opacity: requesting || (!reqTeamId && !reqUserId) ? 0.5 : 1 }}
+            >
+              <Text style={{ fontFamily: theme.fonts.sansBold, fontSize: 12.5, color: theme.colors.primary }}>{requesting ? 'Requesting…' : 'Request inspection'}</Text>
+            </Pressable>
+
+            {requests.length > 0 ? (
+              <>
+                <Text style={sectionLabel}>{`RECEIVED REQUESTS (${requests.length})`}</Text>
+                {requests.map((req) => {
+                  const done = req.status === 'completed' || req.status === 'cancelled'
+                  const answering = answeringRequestId === req.id
+                  return (
+                    <View key={req.id} style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: answering ? theme.colors.primary : theme.colors.border, marginBottom: 8 }]}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <Text style={{ fontFamily: theme.fonts.monoSemiBold, fontSize: 12, color: theme.colors.primary }}>{req.reference}</Text>
+                        <Text style={{ fontFamily: theme.fonts.sansBold, fontSize: 11.5, color: done ? theme.colors.success : theme.colors.textMuted }}>{req.status}</Text>
+                      </View>
+                      <Text style={{ fontFamily: theme.fonts.sans, fontSize: 12, color: theme.colors.textMuted, marginTop: 2 }}>
+                        {req.title} · {req.team?.name ?? req.assignee?.name ?? 'unassigned'}
+                      </Text>
+                      {!done ? (
+                        <Pressable onPress={() => setAnsweringRequestId(answering ? null : req.id)} style={{ alignSelf: 'flex-start', marginTop: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: answering ? theme.colors.primary : theme.colors.surface, borderWidth: 1, borderColor: theme.colors.primary }}>
+                          <Text style={{ fontFamily: theme.fonts.sansBold, fontSize: 11.5, color: answering ? theme.colors.primaryContrast : theme.colors.primary }}>{answering ? 'Answering ✓' : 'Do this inspection'}</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  )
+                })}
+              </>
+            ) : null}
+
             {/* Condition status */}
-            <Text style={sectionLabel}>STATUS / CONDITION</Text>
+            <Text style={[sectionLabel, { marginTop: 10 }]}>STATUS / CONDITION</Text>
             <View style={styles.row}>
               {CONDITIONS.map((c) => {
                 const on = status === c.value

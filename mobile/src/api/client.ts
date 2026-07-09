@@ -9,6 +9,7 @@ import type {
   OrganizationMemberRecord,
   ProjectSummary,
   ServerSnagDetail,
+  SnagInspectionRequestRow,
   SnagInspectionRow,
   StakeholderSummary,
   SyncApplyResult,
@@ -716,7 +717,23 @@ export const apiClient = {
       },
     ),
 
-  // --- Snag inspections (record an on-site inspection of a received snag's asset) ---
+  // --- Snag inspections (request one with a team assignment, then record it) ---
+  listSnagInspectionRequests: (token: string, organizationId: number, snagServerId: number) =>
+    request<{ data: SnagInspectionRequestRow[] }>(`/api/snags/${snagServerId}/inspection-requests`, { token, organizationId }),
+
+  createSnagInspectionRequest: (
+    token: string,
+    organizationId: number,
+    snagServerId: number,
+    body: Record<string, unknown>,
+  ) =>
+    request<{ data: SnagInspectionRequestRow }>(`/api/snags/${snagServerId}/inspection-requests`, {
+      method: 'POST',
+      token,
+      organizationId,
+      body,
+    }),
+
   listSnagInspections: (token: string, organizationId: number, snagServerId: number) =>
     request<{ data: SnagInspectionRow[] }>(`/api/snags/${snagServerId}/inspections`, { token, organizationId }),
 
