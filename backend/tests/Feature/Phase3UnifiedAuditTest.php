@@ -158,6 +158,35 @@ class Phase3UnifiedAuditTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_audit_trail_exports_as_csv(): void
+    {
+        [$organization, $owner, $project] = $this->bootstrap('owner');
+
+        Sanctum::actingAs($owner);
+        $this->withHeaders(['X-Organization-Id' => (string) $organization->id])
+            ->postJson('/api/areas', ['project_id' => $project->id, 'name' => 'Export Zone'])
+            ->assertCreated();
+
+        // A read-only auditor holds audit.export.
+        $auditor = $this->addMember($organization, 'auditor');
+        Sanctum::actingAs($auditor);
+        $response = $this->withHeaders(['X-Organization-Id' => (string) $organization->id])
+            ->get('/api/audit/events/export');
+
+        $response->assertOk();
+        $this->assertStringContainsString('text/csv', (string) $response->headers->get('content-type'));
+        $csv = $response->streamedContent();
+        $this->assertStringContainsString('Action,Actor,Role,Party,Subject', $csv);
+        $this->assertStringContainsString('area.created', $csv);
+
+        // An engineer without audit.export is denied.
+        $engineer = $this->addMember($organization, 'engineer');
+        Sanctum::actingAs($engineer);
+        $this->withHeaders(['X-Organization-Id' => (string) $organization->id])
+            ->get('/api/audit/events/export')
+            ->assertForbidden();
+    }
+
     public function test_audit_events_are_immutable(): void
     {
         [$organization, $owner, $project] = $this->bootstrap('owner');

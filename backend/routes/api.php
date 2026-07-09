@@ -288,6 +288,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
         // Unified cross-entity audit trail (item 9 / BR-FR-009/010, BR-BR-013, §11.3).
         Route::get('/audit/events', [AuditController::class, 'index']);
+        Route::get('/audit/events/export', [AuditController::class, 'export']);
 
         Route::middleware('feature:exports')->group(function (): void {
             Route::get('/exports', [ExportController::class, 'index']);

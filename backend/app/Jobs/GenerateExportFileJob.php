@@ -66,10 +66,15 @@ class GenerateExportFileJob implements ShouldQueue
                 default => throw new \RuntimeException('Unsupported export type: '.$exportJob->type),
             };
 
+            $fileSize = Storage::disk('public')->exists($path)
+                ? Storage::disk('public')->size($path)
+                : null;
+
             $exportJob->update([
                 'status' => 'completed',
                 'file_path' => $path,
                 'file_name' => basename($fileName),
+                'file_size' => $fileSize,
                 'mime_type' => $mimeType,
                 'download_token' => Str::random(40),
                 'completed_at' => Carbon::now(),
@@ -164,6 +169,11 @@ class GenerateExportFileJob implements ShouldQueue
                 'drawing:id,code,title',
                 'assignee:id,name,email',
                 'closeoutInstance.template:id,trade',
+                'area:id,name,code',
+                'building:id,name,code',
+                'location:id,name,code',
+                'category:id,name,code',
+                'sourceOrganization:id,name,code,type',
             ])
             ->orderByDesc('created_at');
 
@@ -206,6 +216,28 @@ class GenerateExportFileJob implements ShouldQueue
             $query->whereDate('created_at', '<=', $filters['date_to']);
         }
 
+        // New-axis facets (item 13 / BR-FR-035): severity, type, and the
+        // Area/Building/Category/source-party dimensions of the reworked snag.
+        if (! empty($filters['severity'])) {
+            $severities = is_array($filters['severity']) ? $filters['severity'] : [$filters['severity']];
+            $query->whereIn('severity', $severities);
+        }
+        if (! empty($filters['snag_type'])) {
+            $query->where('snag_type', $filters['snag_type']);
+        }
+        if (! empty($filters['area_id'])) {
+            $query->where('area_id', (int) $filters['area_id']);
+        }
+        if (! empty($filters['building_id'])) {
+            $query->where('building_id', (int) $filters['building_id']);
+        }
+        if (! empty($filters['category_id'])) {
+            $query->where('category_id', (int) $filters['category_id']);
+        }
+        if (! empty($filters['source_organization_id'])) {
+            $query->where('source_organization_id', (int) $filters['source_organization_id']);
+        }
+
         $snags = $query->get();
 
         $rows = $snags->map(function (Snag $snag): array {
@@ -222,6 +254,13 @@ class GenerateExportFileJob implements ShouldQueue
                 'due_date' => optional($snag->due_date)->toDateString() ?? '-',
                 'closed_at' => optional($snag->closed_at)->toDateTimeString() ?? '-',
                 'created_at' => optional($snag->created_at)->toDateTimeString() ?? '-',
+                'severity' => $snag->severity ?? '-',
+                'snag_type' => $snag->snag_type ?? '-',
+                'area' => $snag->area?->name ?? '-',
+                'building' => $snag->building?->name ?? '-',
+                'location' => $snag->location?->name ?? ($snag->location_text ?: '-'),
+                'category' => $snag->category?->name ?? '-',
+                'source_organization' => $snag->sourceOrganization?->name ?? '-',
             ];
         })->values()->all();
 
