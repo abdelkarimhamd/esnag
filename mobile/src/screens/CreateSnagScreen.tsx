@@ -100,7 +100,7 @@ const initialsOf = (name: string): string => {
 export const CreateSnagScreen = ({ navigation, route }: Props) => {
   const theme = useAppTheme()
   const insets = useSafeAreaInsets()
-  const { token, activeOrganization } = useAuth()
+  const { token, activeOrganization, activeProject } = useAuth()
   const { refreshQueueSize } = useSync()
 
   const [projects, setProjects] = useState<ProjectSummary[]>([])
@@ -169,14 +169,21 @@ export const CreateSnagScreen = ({ navigation, route }: Props) => {
       try {
         setLoading(true)
         const projectsResponse = await apiClient.listProjects(token, activeOrganization.id)
-        setProjects(projectsResponse.data)
+        const list = projectsResponse.data ?? []
+        setProjects(list)
+        // Default to the user's active project (Profile / A5) when nothing is
+        // pre-selected — the functional updater only fills an empty selection,
+        // so a prefilled project or a manual choice is never overridden.
+        if (activeProject && list.some((project) => project.id === activeProject.id)) {
+          setProjectId((current) => current || String(activeProject.id))
+        }
       } finally {
         setLoading(false)
       }
     }
 
     void load()
-  }, [token, activeOrganization?.id])
+  }, [token, activeOrganization?.id, activeProject?.id])
 
   useEffect(() => {
     const loadDrawings = async () => {

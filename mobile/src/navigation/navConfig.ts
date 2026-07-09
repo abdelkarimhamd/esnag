@@ -161,6 +161,16 @@ const fullMenu: MenuSection[] = [
     id: 'account',
     title: 'Account',
     items: [
+      {
+        id: 'profile',
+        type: 'route',
+        label: 'Profile',
+        subtitle: 'Organization, role & project',
+        icon: 'person-circle-outline',
+        tab: 'Snags',
+        stackScreen: 'Profile',
+        roles: allRoles,
+      },
       { id: 'settings', type: 'route', label: 'Settings', subtitle: 'Preferences and devices', icon: 'settings-outline', tab: 'Settings', roles: allRoles },
       { id: 'logout', type: 'action', label: 'Logout', subtitle: 'End current session', icon: 'log-out-outline', action: 'logout', roles: allRoles },
     ],

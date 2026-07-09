@@ -45,6 +45,7 @@ export type SnagsStackParamList = {
   AuditTrail: undefined
   MasterDataAdmin: undefined
   RoleMatrix: undefined
+  Profile: undefined
   Search: undefined
 }
 
