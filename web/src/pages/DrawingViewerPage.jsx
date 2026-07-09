@@ -14,6 +14,17 @@ import { useLocalization } from '../hooks/useLocalization';
 import { subscribeOrganizationChannel } from '../realtime/echo';
 import { formatPriorityLabel, formatStatusLabel, snagPriorityChipColor, snagStatusChipColor } from '../utils/ui';
 import { normalizeApiError } from '../utils/apiError';
+import { BRAND, FONT_MONO } from '../theme';
+
+// Status legend for the drawing canvas overlay (frame-1f). Colours mirror the
+// snag lifecycle status scale used by the pins.
+const CANVAS_LEGEND = [
+    { label: 'New', color: '#6B7A93' },
+    { label: 'Assigned', color: '#24488F' },
+    { label: 'In progress', color: '#2F8FBE' },
+    { label: 'Review', color: '#C08A23' },
+    { label: 'Closed', color: '#6E8C3A' },
+];
 const inlineError = (message, hint = null) => ({
     message,
     hint,
@@ -34,7 +45,7 @@ const locationReasonLabel = (source) => {
 };
 const statusPinColor = (status) => {
     if (status === 'closed') {
-        return '#7A933D';
+        return '#6E8C3A';
     }
     if (status === 'rejected') {
         return '#B23B3B';
@@ -48,7 +59,7 @@ const statusPinColor = (status) => {
     if (status === 'assigned') {
         return '#24488F';
     }
-    return '#5F7398';
+    return '#6B7A93';
 };
 const isImageRevision = (revision) => Boolean(revision?.mime_type.startsWith('image/'));
 const loadImageElement = (src) => new Promise((resolve, reject) => {
@@ -88,6 +99,7 @@ export const DrawingViewerPage = () => {
     const [barcodeInput, setBarcodeInput] = useState(searchParams.get('barcode') ?? '');
     const [resolvingBarcode, setResolvingBarcode] = useState(false);
     const [pinDraft, setPinDraft] = useState(null);
+    const [zoom, setZoom] = useState(100);
     const [createDialogOpen, setCreateDialogOpen] = useState(false);
     const [selectedSnagId, setSelectedSnagId] = useState(null);
     const [locationSuggestions, setLocationSuggestions] = useState([]);
@@ -532,16 +544,25 @@ export const DrawingViewerPage = () => {
         try {
             const location = locationOptions.find((item) => item.id === payload.location_id);
             const floor = location ? floorOptions.find((item) => item.id === location.floor_id) : null;
-            await api.post('/api/snags', {
+            const response = await api.post('/api/snags', {
                 project_id: project.id,
                 drawing_id: drawing.id,
                 drawing_revision_id: selectedRevisionId ?? drawing.current_revision_id,
-                building_id: drawing.building_id,
+                building_id: payload.building_id ?? drawing.building_id,
+                area_id: payload.area_id,
                 floor_id: floor?.id ?? drawing.floor_id,
                 location_id: payload.location_id,
+                location_text: payload.location_text,
                 title: payload.title,
                 description: payload.description,
                 priority: payload.priority,
+                severity: payload.severity,
+                category_id: payload.category_id,
+                trade: payload.trade,
+                is_dlp: payload.is_dlp,
+                cluster: payload.cluster,
+                toc_reference: payload.toc_reference,
+                taking_over_certificate_id: payload.taking_over_certificate_id,
                 assigned_to: payload.assigned_to,
                 assigned_company_id: payload.assigned_company_id,
                 assigned_team_id: payload.assigned_team_id,
@@ -551,7 +572,27 @@ export const DrawingViewerPage = () => {
                 pin_x: payload.pin_x,
                 pin_y: payload.pin_y,
             });
+            // Upload the evidence photos captured in the dialog (required for DLP snags).
+            const createdSnag = response.data?.data;
+            const photos = Array.isArray(payload.photos) ? payload.photos : [];
+            let photoUploadFailed = false;
+            if (createdSnag?.id && photos.length > 0) {
+                for (const file of photos) {
+                    const form = new FormData();
+                    form.append('type', 'photo');
+                    form.append('file', file);
+                    try {
+                        await api.post(`/api/snags/${createdSnag.id}/attachments`, form);
+                    }
+                    catch {
+                        photoUploadFailed = true;
+                    }
+                }
+            }
             await loadSnags(drawing.id, selectedRevisionId);
+            if (photoUploadFailed) {
+                setError(inlineError('Snag created, but one or more photos failed to upload. You can add them from the snag.'));
+            }
         }
         catch (requestError) {
             setError(normalizeApiError(requestError, 'Unable to create snag from the selected pin.'));
@@ -716,12 +757,12 @@ export const DrawingViewerPage = () => {
       {bulkMessage && <Alert severity="success">{bulkMessage}</Alert>}
       {project?.is_training && project.training_locked && <Alert severity="warning">{t('training.read_only')}</Alert>}
 
-      <PageHero title="Drawing Viewer" description="Follow the guided steps to place a pin, create a snag, and then assign or transition work." actions={<Button component={RouterLink} to={`/projects/${projectId}`} variant="outlined" sx={{ borderColor: 'rgba(255,255,255,0.42)', color: '#FFFFFF' }}>
+      <PageHero title="Drawing Viewer" description="Follow the guided steps to place a pin, create a snag, and then assign or transition work." actions={<Button component={RouterLink} to={`/projects/${projectId}`} variant="outlined">
             Project Dashboard
           </Button>} badges={<Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            <Chip size="small" variant="outlined" label={`Drawing ${drawing?.code ?? '-'}`} sx={{ color: '#FFFFFF', borderColor: 'rgba(255,255,255,0.44)' }}/>
-            <Chip size="small" variant="outlined" label={`Revision ${activeRevisionLabel}`} sx={{ color: '#FFFFFF', borderColor: 'rgba(255,255,255,0.44)' }}/>
-            <Chip size="small" variant="outlined" label={`Snags ${snags.length}`} sx={{ color: '#FFFFFF', borderColor: 'rgba(255,255,255,0.44)' }}/>
+            <Chip size="small" variant="outlined" label={`Drawing ${drawing?.code ?? '-'}`}/>
+            <Chip size="small" variant="outlined" label={`Revision ${activeRevisionLabel}`}/>
+            <Chip size="small" variant="outlined" label={`Snags ${snags.length}`}/>
           </Stack>}/>
 
       <Paper sx={{ p: 1.5 }}>
@@ -887,51 +928,205 @@ export const DrawingViewerPage = () => {
             <Alert severity={guidedStep === 2 ? 'info' : 'success'} sx={{ mb: 1.2 }}>
               {guidedHint}
             </Alert>
-            {!compareMode && (<Box id="drawing-canvas" sx={{
+            {!compareMode && (<Box sx={{
                 position: 'relative',
                 width: '100%',
                 minHeight: 540,
-                borderRadius: 2,
-                overflow: 'hidden',
-                backgroundColor: '#0F172A',
-            }} onClick={onCanvasClick}>
-                {!drawingSource && (<Box display="flex" alignItems="center" justifyContent="center" minHeight={540}>
-                    <Typography color="white">No revision selected</Typography>
+                maxHeight: 720,
+                borderRadius: '16px',
+                overflow: 'auto',
+                border: `1px solid ${BRAND.border}`,
+                bgcolor: '#FBFCFE',
+                // subtle blueprint surface so the plan area always reads as a drawing canvas
+                backgroundImage: 'radial-gradient(rgba(20,38,66,0.05) 1px, transparent 0)',
+                backgroundSize: '22px 22px',
+            }}>
+                {/* Click surface + pins — width scales with the zoom control */}
+                <Box id="drawing-canvas" onClick={onCanvasClick} sx={{
+                position: 'relative',
+                width: `${zoom}%`,
+                margin: '0 auto',
+                minHeight: 540,
+                cursor: canCreateSnag ? 'crosshair' : 'default',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'width 140ms ease',
+            }}>
+                {!drawingSource && (<Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1, minHeight: 540, color: BRAND.muted }}>
+                    <Box component="svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/></Box>
+                    <Typography sx={{ fontSize: 13.5, fontWeight: 600 }}>No drawing revision to display</Typography>
+                    <Typography sx={{ fontSize: 12 }}>{canManageDrawing ? 'Upload a revision to start plotting snags.' : 'Select a revision above.'}</Typography>
                   </Box>)}
 
-                {drawingSource && isImageRevision(selectedRevision) && (<img src={drawingSource} alt={selectedRevision?.file_name} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}/>)}
+                {drawingSource && isImageRevision(selectedRevision) && (<img src={drawingSource} alt={selectedRevision?.file_name} style={{ width: '100%', height: 'auto', display: 'block' }}/>)}
 
                 {drawingSource && selectedRevision && !isImageRevision(selectedRevision) && (<iframe src={drawingSource} title={selectedRevision.file_name} style={{ width: '100%', height: 640, border: 0, backgroundColor: '#fff' }}/>)}
 
-                {snags.map((snag) => (<Box key={snag.id} sx={{
+                {snags.map((snag, index) => (<Box key={snag.id} sx={{
                     position: 'absolute',
                     left: `${snag.pin_x * 100}%`,
                     top: `${snag.pin_y * 100}%`,
-                    width: 22,
-                    height: 22,
-                    borderRadius: '50%',
+                    width: 32,
+                    height: 32,
                     transform: 'translate(-50%, -50%)',
-                    border: '2px solid #FFF',
-                    backgroundColor: statusPinColor(snag.status),
-                    boxShadow: '0 0 0 3px rgba(15, 23, 42, 0.18)',
                     cursor: 'pointer',
+                    transition: 'transform 120ms ease',
+                    '&:hover': { transform: 'translate(-50%, -50%) scale(1.12)' },
                 }} onClick={(event) => {
                     event.stopPropagation();
                     setSelectedSnagId(snag.id);
-                }} title={`${snag.reference} - ${formatStatusLabel(snag.status)}`}/>))}
+                }} title={`${snag.reference} - ${formatStatusLabel(snag.status)}`}>
+                    <Box sx={{
+                    position: 'absolute',
+                    inset: 0,
+                    borderRadius: '50%',
+                    background: snag.status === 'rejected' ? 'rgba(178,59,59,0.18)' : 'rgba(15,23,42,0.1)',
+                }}/>
+                    <Box sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    width: 27,
+                    height: 27,
+                    transform: 'translate(-50%, -50%)',
+                    borderRadius: '50%',
+                    background: statusPinColor(snag.status),
+                    border: '2.5px solid #fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#fff',
+                    fontFamily: FONT_MONO,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    lineHeight: 1,
+                }}>
+                      {index + 1}
+                    </Box>
+                  </Box>))}
 
                 {pinDraft && (<Box sx={{
                     position: 'absolute',
                     left: `${pinDraft.x * 100}%`,
                     top: `${pinDraft.y * 100}%`,
-                    width: 18,
-                    height: 18,
-                    borderRadius: '50%',
+                    width: 48,
+                    height: 48,
                     transform: 'translate(-50%, -50%)',
-                    border: '2px dashed #F8FAFC',
-                    backgroundColor: '#2F8FBE',
                     pointerEvents: 'none',
-                }}/>)}
+                }}>
+                    <Box sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    width: 48,
+                    height: 48,
+                    transform: 'translate(-50%, -50%)',
+                    borderRadius: '50%',
+                    border: `2px solid ${BRAND.teal}`,
+                    opacity: 0.4,
+                }}/>
+                    <Box sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    width: 28,
+                    height: 28,
+                    transform: 'translate(-50%, -50%)',
+                    borderRadius: '50%',
+                    background: 'rgba(47,143,190,0.25)',
+                    border: `2.5px dashed ${BRAND.teal}`,
+                }}/>
+                  </Box>)}
+                </Box>
+
+                {/* Breadcrumb chip (top-inline-start overlay) */}
+                <Box sx={{
+                position: 'absolute',
+                top: 14,
+                insetInlineStart: 14,
+                zIndex: 2,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                p: '8px 12px',
+                borderRadius: '10px',
+                background: 'rgba(255,255,255,0.94)',
+                border: `1px solid ${BRAND.border}`,
+                boxShadow: '0 4px 12px -6px rgba(20,38,66,0.3)',
+                fontSize: 12,
+                fontWeight: 600,
+                color: BRAND.inkSoft,
+            }}>
+                  <Box component="span" sx={{ color: BRAND.navy }}>{buildingOptions.find((b) => b.id === drawing?.building_id)?.name ?? project?.name ?? 'Project'}</Box>
+                  <Box component="span" sx={{ color: '#C4CCD8' }}>›</Box>
+                  <Box component="span">{floorOptions.find((floor) => floor.id === drawing?.floor_id)?.name ?? 'All floors'}</Box>
+                  <Box component="span" sx={{ color: '#C4CCD8' }}>›</Box>
+                  <Box component="span">{drawing?.title ?? drawing?.code ?? 'Drawing'}</Box>
+                </Box>
+
+                {/* Zoom control (top-inline-end overlay) */}
+                <Box sx={{
+                position: 'absolute',
+                top: 14,
+                insetInlineEnd: 14,
+                zIndex: 2,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '2px',
+                p: '4px',
+                borderRadius: '10px',
+                background: 'rgba(255,255,255,0.94)',
+                border: `1px solid ${BRAND.border}`,
+                boxShadow: '0 4px 12px -6px rgba(20,38,66,0.3)',
+            }}>
+                  <Box role="button" aria-label="Zoom out" tabIndex={0} onClick={() => setZoom((value) => Math.max(25, value - 10))} sx={{
+                width: 28,
+                height: 28,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '7px',
+                color: BRAND.inkSoft,
+                fontSize: 16,
+                cursor: 'pointer',
+                userSelect: 'none',
+            }}>−</Box>
+                  <Box role="button" tabIndex={0} title="Reset zoom to 100%" onClick={() => setZoom(100)} sx={{ fontFamily: FONT_MONO, fontSize: 12, fontWeight: 600, color: BRAND.ink, px: '6px', cursor: 'pointer', direction: 'ltr', unicodeBidi: 'isolate' }}>{zoom}%</Box>
+                  <Box role="button" aria-label="Zoom in" tabIndex={0} onClick={() => setZoom((value) => Math.min(400, value + 10))} sx={{
+                width: 28,
+                height: 28,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '7px',
+                color: BRAND.inkSoft,
+                fontSize: 16,
+                cursor: 'pointer',
+                userSelect: 'none',
+            }}>+</Box>
+                </Box>
+
+                {/* Legend (bottom-inline-start overlay) */}
+                <Box sx={{
+                position: 'absolute',
+                bottom: 14,
+                insetInlineStart: 14,
+                zIndex: 2,
+                display: 'flex',
+                gap: '14px',
+                p: '9px 14px',
+                borderRadius: '11px',
+                background: 'rgba(255,255,255,0.94)',
+                border: `1px solid ${BRAND.border}`,
+                boxShadow: '0 4px 12px -6px rgba(20,38,66,0.3)',
+                flexWrap: 'wrap',
+            }}>
+                  {CANVAS_LEGEND.map((item) => (<Box key={item.label} sx={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: 11, color: BRAND.inkSoft }}>
+                      <Box sx={{ width: 8, height: 8, borderRadius: '50%', background: item.color, flex: 'none' }}/>
+                      {item.label}
+                    </Box>))}
+                </Box>
               </Box>)}
 
             {compareMode && (<Grid container spacing={2}>
@@ -1177,7 +1372,7 @@ export const DrawingViewerPage = () => {
             .filter((value) => Number.isFinite(value)))} pageSizeOptions={[10, 20, 50]} onRowClick={(params) => setSelectedSnagId(params.row.id)} sx={{ border: 0 }}/>
       </Paper>
 
-      {drawing && (<CreateSnagDialog open={createDialogOpen} drawing={drawing} revision={selectedRevision} locationOptions={locationOptions} rootCauseCategories={rootCauseCategories} members={members} companies={companies} teams={teams} canAssign={projectPermissions.includes('snags.assign')} pin={pinDraft} suggestedLocation={suggestedLocation} onClose={() => {
+      {drawing && (<CreateSnagDialog open={createDialogOpen} drawing={drawing} revision={selectedRevision} locationOptions={locationOptions} rootCauseCategories={rootCauseCategories} members={members} companies={companies} teams={teams} canAssign={projectPermissions.includes('snags.assign')} canManageToc={projectPermissions.includes('toc.manage')} pin={pinDraft} suggestedLocation={suggestedLocation} onClose={() => {
                 setCreateDialogOpen(false);
                 setPinDraft(null);
                 setLocationSuggestions([]);
