@@ -26,6 +26,37 @@ export interface ProjectSummary {
   code: string
 }
 
+export interface AssetSummary {
+  id: number
+  name: string
+  code?: string | null
+  category?: string | null
+  status?: string | null
+}
+
+export interface StakeholderSummary {
+  id: number
+  name: string
+  code?: string | null
+}
+
+export interface SnagInspectionRow {
+  id: number
+  reference: string | null
+  status: string
+  equipment_id: number | null
+  asset_name: string | null
+  notes: string | null
+  inspected_at: string | null
+  created_at: string
+  equipment?: { id: number; name: string; code?: string | null } | null
+  maintenance_company?: { id: number; name: string } | null
+  maintenance_team?: { id: number; name: string } | null
+  maintenance_user?: { id: number; name: string } | null
+  inspector?: { id: number; name: string } | null
+  attachments?: Array<{ id: number; type: string; file_name: string }>
+}
+
 export interface DrawingSummary {
   id: number
   code: string

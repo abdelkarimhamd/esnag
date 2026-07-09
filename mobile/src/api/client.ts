@@ -1,5 +1,6 @@
 import { Platform } from 'react-native'
 import type {
+  AssetSummary,
   AuthPayload,
   DrawingSummary,
   MobileAuthDeviceRecord,
@@ -8,6 +9,8 @@ import type {
   OrganizationMemberRecord,
   ProjectSummary,
   ServerSnagDetail,
+  SnagInspectionRow,
+  StakeholderSummary,
   SyncApplyResult,
 } from '../types'
 import type {
@@ -711,6 +714,59 @@ export const apiClient = {
         token,
         organizationId,
       },
+    ),
+
+  // --- Snag inspections (record an on-site inspection of a received snag's asset) ---
+  listSnagInspections: (token: string, organizationId: number, snagServerId: number) =>
+    request<{ data: SnagInspectionRow[] }>(`/api/snags/${snagServerId}/inspections`, { token, organizationId }),
+
+  createSnagInspection: (
+    token: string,
+    organizationId: number,
+    snagServerId: number,
+    body: Record<string, unknown>,
+  ) =>
+    request<{ data: SnagInspectionRow }>(`/api/snags/${snagServerId}/inspections`, {
+      method: 'POST',
+      token,
+      organizationId,
+      body,
+    }),
+
+  uploadSnagInspectionAttachment: (
+    token: string,
+    organizationId: number,
+    inspectionId: number,
+    file: { uri: string; name: string; type: string },
+    type: 'photo' | 'document',
+  ) => {
+    const form = new FormData()
+    form.append('type', type)
+    form.append('file', { uri: file.uri, name: file.name, type: file.type } as unknown as Blob)
+    return request<{ data: unknown }>(`/api/snag-inspections/${inspectionId}/attachments`, {
+      method: 'POST',
+      token,
+      organizationId,
+      body: form,
+    })
+  },
+
+  listAssets: (token: string, organizationId: number, projectId?: number | null) =>
+    request<{ data: AssetSummary[] }>(
+      '/api/equipment?per_page=200' + (projectId ? `&project_id=${projectId}` : ''),
+      { token, organizationId },
+    ),
+
+  listStakeholderCompanies: (token: string, organizationId: number, projectId?: number | null) =>
+    request<{ data: StakeholderSummary[] }>(
+      '/api/stakeholders/companies' + (projectId ? `?project_id=${projectId}` : ''),
+      { token, organizationId },
+    ),
+
+  listStakeholderTeams: (token: string, organizationId: number, projectId?: number | null) =>
+    request<{ data: StakeholderSummary[] }>(
+      '/api/stakeholders/teams' + (projectId ? `?project_id=${projectId}` : ''),
+      { token, organizationId },
     ),
 
   // Inspection (ITR) submissions. All endpoints sit behind the org's

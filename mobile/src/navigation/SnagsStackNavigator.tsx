@@ -15,6 +15,7 @@ import { MasterDataAdminScreen } from '../screens/MasterDataAdminScreen'
 import { ProfileScreen } from '../screens/ProfileScreen'
 import { RoleMatrixScreen } from '../screens/RoleMatrixScreen'
 import { SearchScreen } from '../screens/SearchScreen'
+import { SnagInspectionScreen } from '../screens/SnagInspectionScreen'
 import { SnagDetailScreen } from '../screens/SnagDetailScreen'
 import { SnagsScreen } from '../screens/SnagsScreen'
 
@@ -59,6 +60,7 @@ export const SnagsStackNavigator = ({ onOpenMore, notificationsBadge }: SnagsSta
       <SnagsStack.Screen name="MasterDataAdmin" component={MasterDataAdminScreen} options={{ title: 'Master data' }} />
       <SnagsStack.Screen name="RoleMatrix" component={RoleMatrixScreen} options={{ title: 'Roles & permissions' }} />
       <SnagsStack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Profile' }} />
+      <SnagsStack.Screen name="SnagInspection" component={SnagInspectionScreen} options={{ title: 'Inspect snag' }} />
       <SnagsStack.Screen name="Search" component={SearchScreen} options={{ headerShown: false }} />
     </SnagsStack.Navigator>
   )

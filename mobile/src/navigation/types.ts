@@ -46,6 +46,13 @@ export type SnagsStackParamList = {
   MasterDataAdmin: undefined
   RoleMatrix: undefined
   Profile: undefined
+  SnagInspection: {
+    snagServerId: number
+    reference?: string
+    title?: string
+    status?: string
+    projectId?: number | null
+  }
   Search: undefined
 }
 
