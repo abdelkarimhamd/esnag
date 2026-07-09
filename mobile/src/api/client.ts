@@ -4,9 +4,36 @@ import type {
   DrawingSummary,
   MobileAuthDeviceRecord,
   NotificationPreferenceRecord,
+  NotificationRecord,
+  OrganizationMemberRecord,
   ProjectSummary,
+  ServerSnagDetail,
   SyncApplyResult,
 } from '../types'
+import type {
+  InspectionDecision,
+  InspectionSubmissionDetailResponse,
+  InspectionSubmissionListResponse,
+  ListInspectionSubmissionsParams,
+  UpdateInspectionSubmissionPayload,
+} from '../inspections/types'
+
+// Serialize inspection list params into a query string, dropping undefined /
+// empty values (keeps the request URL clean and matches the web caller which
+// passes `undefined` for unset filters).
+const buildQueryString = (params?: Record<string, string | number | undefined>): string => {
+  if (!params) {
+    return ''
+  }
+  const search = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      search.append(key, String(value))
+    }
+  })
+  const query = search.toString()
+  return query ? `?${query}` : ''
+}
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://127.0.0.1:8000'
 
@@ -150,6 +177,109 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return payload as T
 }
 
+// Global search result rows (GET /api/search). Each list is capped at 10 and
+// permission + org scoped server-side; under 2 query chars the server returns
+// empty arrays.
+export interface SearchSnagResult {
+  id: number
+  reference: string
+  title: string
+  project_id: number
+  status: string
+}
+
+export interface SearchDrawingResult {
+  id: number
+  code: string
+  title: string
+  project_id: number
+}
+
+export interface SearchResults {
+  snags: SearchSnagResult[]
+  drawings: SearchDrawingResult[]
+}
+
+// Area / building / snag-category master-data rows for the create-snag pickers.
+export interface MasterDataRecord {
+  id: number
+  name: string
+  code: string | null
+}
+
+// ── Multi-party handover routing (Phase 2) ──
+export interface HandoverParty {
+  id: number
+  name: string
+  code: string | null
+  type: string
+}
+
+export interface HandoverStageNode {
+  stage_order: number
+  stage_key: string
+  name: string
+  responsible_type: string
+  permitted_actions: string[]
+  forward_to_stage: number | null
+  approve_to_stage: number | null
+  return_to_stage: number | null
+  is_final_authority: boolean
+  is_loop_back: boolean
+}
+
+export interface HandoverEventRow {
+  id: number
+  action: string
+  reason: string | null
+  created_at: string
+  prior_stage_order: number | null
+  new_stage_order: number | null
+  actor?: { id: number; name: string } | null
+}
+
+export interface HandoverSummary {
+  current_stage_order: number | null
+  current_stage_key: string | null
+  current_stage_name: string | null
+  status: string
+  cycle_number: number
+  viewer_permitted_actions: string[]
+  gate_ready: boolean
+  gate_missing: string[]
+}
+
+export interface HandoverRequestRow {
+  id: number
+  reference: string
+  title: string
+  status: string
+  cycle_number: number
+  current_stage_order: number | null
+  responsible_company?: HandoverParty | null
+  project?: { id: number; name: string; code?: string } | null
+  updated_at?: string
+}
+
+export interface HandoverAttachment {
+  id: number
+  original_name: string
+  mime_type?: string | null
+  size_bytes?: number | null
+  cycle_number: number
+  created_at?: string
+  uploader?: { id: number; name: string } | null
+}
+
+export interface HandoverRequestDetail extends HandoverRequestRow {
+  description?: string | null
+  stage_graph_snapshot: HandoverStageNode[]
+  assignee?: { id: number; name: string } | null
+  events?: HandoverEventRow[]
+  summary?: HandoverSummary
+  attachments?: HandoverAttachment[]
+}
+
 export const apiClient = {
   mobileLogin: (
     email: string,
@@ -188,6 +318,12 @@ export const apiClient = {
       token,
     }),
 
+  globalSearch: (token: string, organizationId: number, q: string) =>
+    request<{ data: SearchResults }>(`/api/search?q=${encodeURIComponent(q)}`, {
+      token,
+      organizationId,
+    }),
+
   listProjects: (token: string, organizationId: number) =>
     request<{ data: ProjectSummary[] }>('/api/projects?per_page=200', {
       token,
@@ -199,6 +335,72 @@ export const apiClient = {
       token,
       organizationId,
     }),
+
+  // Location/category master data for the create-snag form (BR-FR-026/028/029).
+  listAreas: (token: string, organizationId: number, projectId: number) =>
+    request<{ data: MasterDataRecord[] }>(`/api/areas?project_id=${projectId}`, {
+      token,
+      organizationId,
+    }),
+
+  listBuildings: (token: string, organizationId: number, projectId: number, areaId?: number | null) =>
+    request<{ data: MasterDataRecord[] }>(
+      `/api/buildings?project_id=${projectId}` + (areaId ? `&area_id=${areaId}` : ''),
+      { token, organizationId },
+    ),
+
+  listSnagCategories: (token: string, organizationId: number) =>
+    request<{ data: MasterDataRecord[] }>('/api/snag-categories', {
+      token,
+      organizationId,
+    }),
+
+  listHandoverRequests: (token: string, organizationId: number, params: { project_id?: number; status?: string } = {}) => {
+    const qs = new URLSearchParams()
+    if (params.project_id) qs.set('project_id', String(params.project_id))
+    if (params.status) qs.set('status', params.status)
+    qs.set('per_page', '50')
+    return request<{ data: HandoverRequestRow[] }>(`/api/handovers/requests?${qs.toString()}`, { token, organizationId })
+  },
+
+  fetchHandoverRequest: (token: string, organizationId: number, id: number) =>
+    request<{ data: HandoverRequestDetail }>(`/api/handovers/requests/${id}`, { token, organizationId }),
+
+  createHandoverRequest: (
+    token: string,
+    organizationId: number,
+    body: { project_id: number; title: string; description?: string; area_id?: number | null; building_id?: number | null; location_text?: string | null },
+  ) =>
+    request<{ data: HandoverRequestDetail }>('/api/handovers/requests', { method: 'POST', token, organizationId, body }),
+
+  listHandoverAttachments: (token: string, organizationId: number, id: number) =>
+    request<{ data: HandoverAttachment[] }>(`/api/handovers/requests/${id}/attachments`, { token, organizationId }),
+
+  uploadHandoverAttachment: (
+    token: string,
+    organizationId: number,
+    id: number,
+    file: { uri: string; name: string; type: string },
+  ) => {
+    const form = new FormData()
+    // React Native's FormData accepts this file descriptor shape.
+    form.append('file', { uri: file.uri, name: file.name, type: file.type } as unknown as Blob)
+    return request<{ data: HandoverAttachment }>(`/api/handovers/requests/${id}/attachments`, {
+      method: 'POST',
+      token,
+      organizationId,
+      body: form,
+    })
+  },
+
+  submitHandoverRequest: (token: string, organizationId: number, id: number) =>
+    request<{ data: HandoverRequestDetail }>(`/api/handovers/requests/${id}/submit`, { method: 'POST', token, organizationId }),
+
+  actHandoverRequest: (token: string, organizationId: number, id: number, action: string, reason?: string | null) =>
+    request<{ data: HandoverRequestDetail }>(`/api/handovers/requests/${id}/act`, { method: 'POST', token, organizationId, body: { action, reason: reason ?? undefined } }),
+
+  closeHandoverRequest: (token: string, organizationId: number, id: number, reason?: string | null) =>
+    request<{ data: HandoverRequestDetail }>(`/api/handovers/requests/${id}/close`, { method: 'POST', token, organizationId, body: { reason: reason ?? undefined } }),
 
   pullSync: (token: string, organizationId: number, since?: string | null) =>
     request<{
@@ -368,6 +570,126 @@ export const apiClient = {
       token,
       organizationId,
     }),
+
+  fetchSnag: (token: string, organizationId: number, snagId: number) =>
+    request<{ data: ServerSnagDetail }>(`/api/snags/${snagId}`, {
+      token,
+      organizationId,
+    }),
+
+  listNotifications: (token: string, organizationId: number, perPage = 50) =>
+    request<{
+      data: NotificationRecord[]
+      meta: { current_page: number; last_page: number; per_page: number; total: number; unread_count: number }
+    }>(`/api/notifications?per_page=${perPage}`, {
+      token,
+      organizationId,
+    }),
+
+  markNotificationRead: (token: string, organizationId: number, notificationId: string) =>
+    request<{ message: string }>(`/api/notifications/${notificationId}/read`, {
+      token,
+      organizationId,
+      method: 'POST',
+    }),
+
+  markAllNotificationsRead: (token: string, organizationId: number) =>
+    request<{ message: string }>('/api/notifications/read-all', {
+      token,
+      organizationId,
+      method: 'POST',
+    }),
+
+  fetchOrganizationMembers: (token: string, organizationId: number, projectId?: number | null) =>
+    request<{ data: OrganizationMemberRecord[] }>(
+      '/api/organizations/members' + (projectId ? `?project_id=${projectId}` : ''),
+      {
+        token,
+        organizationId,
+      },
+    ),
+
+  fetchSnagCloseout: (token: string, organizationId: number, snagId: number) =>
+    request<{ data: Record<string, unknown> | null; meta: { templates: unknown[] } }>(
+      `/api/snags/${snagId}/closeout`,
+      {
+        token,
+        organizationId,
+      },
+    ),
+
+  // Inspection (ITR) submissions. All endpoints sit behind the org's
+  // `feature:inspections` flag on the backend; the client just calls them.
+
+  // GET /api/inspections/submissions — paginated list with completion_percent
+  // + status per row (template eager-loaded for the checklist donut).
+  listInspectionSubmissions: (
+    token: string,
+    organizationId: number,
+    params?: ListInspectionSubmissionsParams,
+  ) =>
+    request<InspectionSubmissionListResponse>(
+      `/api/inspections/submissions${buildQueryString(params as Record<string, string | number | undefined>)}`,
+      {
+        token,
+        organizationId,
+      },
+    ),
+
+  // GET /api/inspections/submissions/{id} — full detail incl. template schema
+  // (sections/fields) + saved form_data responses + approvals/signatures/requests.
+  getInspectionSubmission: (token: string, organizationId: number, id: number) =>
+    request<InspectionSubmissionDetailResponse>(`/api/inspections/submissions/${id}`, {
+      token,
+      organizationId,
+    }),
+
+  // PUT /api/inspections/submissions/{id} — save checklist responses. The
+  // controller only accepts `form_data` and only while status is draft/in_review.
+  updateInspectionSubmission: (
+    token: string,
+    organizationId: number,
+    id: number,
+    payload: UpdateInspectionSubmissionPayload,
+  ) =>
+    request<InspectionSubmissionDetailResponse>(`/api/inspections/submissions/${id}`, {
+      token,
+      organizationId,
+      method: 'PUT',
+      body: payload,
+    }),
+
+  // POST /api/inspections/submissions/{id}/submit — move a draft into review.
+  submitInspection: (token: string, organizationId: number, id: number) =>
+    request<InspectionSubmissionDetailResponse>(`/api/inspections/submissions/${id}/submit`, {
+      token,
+      organizationId,
+      method: 'POST',
+    }),
+
+  // POST /api/inspections/submissions/{id}/approve — approve/reject the current
+  // step (InspectionApprovalController@decide: { decision, notes? }).
+  decideInspection: (
+    token: string,
+    organizationId: number,
+    id: number,
+    decision: InspectionDecision,
+    note?: string | null,
+  ) =>
+    request<InspectionSubmissionDetailResponse>(`/api/inspections/submissions/${id}/approve`, {
+      token,
+      organizationId,
+      method: 'POST',
+      body: { decision, notes: note || undefined },
+    }),
+
+  drawingRevisionFileUrl: (revisionId: number) => `${API_URL}/api/drawing-revisions/${revisionId}/file`,
+
+  authHeaders: (token: string, organizationId: number): Record<string, string> => ({
+    Authorization: `Bearer ${token}`,
+    'X-Organization-Id': String(organizationId),
+    Accept: 'application/json',
+  }),
 
   mediaUrl: (path: string) => `${API_URL}/storage/${path}`,
 }
