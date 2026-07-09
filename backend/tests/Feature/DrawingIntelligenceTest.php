@@ -338,6 +338,31 @@ class DrawingIntelligenceTest extends TestCase
         $this->assertDatabaseHas('drawings', ['id' => $only->id]);
     }
 
+    public function test_cannot_reparent_the_last_drawing_off_a_building(): void
+    {
+        [$organization, $owner] = $this->createOrganizationWithRole('owner');
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $buildingA = Building::factory()->create(['organization_id' => $organization->id, 'project_id' => $project->id]);
+        $buildingB = Building::factory()->create(['organization_id' => $organization->id, 'project_id' => $project->id]);
+
+        $only = Drawing::factory()->create(['organization_id' => $organization->id, 'project_id' => $project->id, 'building_id' => $buildingA->id]);
+
+        Sanctum::actingAs($owner);
+
+        // Moving building A's only drawing away is blocked (BR-BR-016).
+        $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->putJson("/api/drawings/{$only->id}", ['building_id' => $buildingB->id])
+            ->assertStatus(422);
+        $this->assertDatabaseHas('drawings', ['id' => $only->id, 'building_id' => $buildingA->id]);
+
+        // With a second drawing on building A, the reparent is allowed.
+        Drawing::factory()->create(['organization_id' => $organization->id, 'project_id' => $project->id, 'building_id' => $buildingA->id]);
+        $this->withHeader('X-Organization-Id', (string) $organization->id)
+            ->putJson("/api/drawings/{$only->id}", ['building_id' => $buildingB->id])
+            ->assertOk();
+        $this->assertDatabaseHas('drawings', ['id' => $only->id, 'building_id' => $buildingB->id]);
+    }
+
     public function test_aggregate_returns_building_snags_with_severity_summary(): void
     {
         [$organization, $owner] = $this->createOrganizationWithRole('owner');

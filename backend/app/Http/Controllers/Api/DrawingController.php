@@ -160,6 +160,20 @@ class DrawingController extends Controller
             'floor_id' => ['nullable', 'integer', 'exists:floors,id'],
         ]);
 
+        // BR-BR-016: moving a drawing off its building (reparent or unset) must not
+        // leave that building with zero drawings — the delete guard alone is not enough.
+        if (array_key_exists('building_id', $validated)
+            && $drawing->building_id !== null
+            && (int) ($validated['building_id'] ?? 0) !== (int) $drawing->building_id) {
+            $remaining = Drawing::query()
+                ->where('building_id', $drawing->building_id)
+                ->where('id', '!=', $drawing->id)
+                ->count();
+            if ($remaining === 0) {
+                abort(422, 'Cannot move the last drawing off its building (a building must retain at least one drawing).');
+            }
+        }
+
         if (array_key_exists('building_id', $validated) && ! array_key_exists('area_id', $validated) && $validated['building_id']) {
             $validated['area_id'] = Building::query()->whereKey($validated['building_id'])->value('area_id');
         }

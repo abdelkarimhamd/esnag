@@ -228,6 +228,7 @@ class HandoverRequestController extends Controller
     {
         $this->assertOrganization($handoverRequest->organization_id, $request);
         $this->authorize('view', $handoverRequest);
+        $this->assertHandoverWriteAccess($request, $handoverRequest);
 
         $validated = $request->validate([
             'snag_ids' => ['required', 'array', 'min:1', 'max:500'],
@@ -249,6 +250,7 @@ class HandoverRequestController extends Controller
     {
         $this->assertOrganization($handoverRequest->organization_id, $request);
         $this->authorize('view', $handoverRequest);
+        $this->assertHandoverWriteAccess($request, $handoverRequest);
 
         $validated = $request->validate([
             'inspection_submission_ids' => ['required', 'array', 'min:1', 'max:200'],
@@ -308,6 +310,7 @@ class HandoverRequestController extends Controller
     {
         $this->assertOrganization($handoverRequest->organization_id, $request);
         $this->authorize('view', $handoverRequest);
+        $this->assertHandoverWriteAccess($request, $handoverRequest);
         $organization = $this->currentOrganization($request);
 
         $request->validate([
@@ -490,6 +493,53 @@ class HandoverRequestController extends Controller
             ->value('company_id');
 
         return $companyId ? (int) $companyId : null;
+    }
+
+    /**
+     * Gate the record-modifying handover endpoints (attach snags / inspections /
+     * documents). Unlike the read-only 'view' policy, these mutate the record and
+     * its close-gate inputs, so they require a transactional handover verb (which
+     * the read-only auditor lacks) AND membership of a party on this handover — the
+     * responsible or the originating party. Coordinators holding handover.assign
+     * (e.g. FMMP) may also compile. No org-admin-only bypass.
+     */
+    private function assertHandoverWriteAccess(Request $request, HandoverRequest $handoverRequest): void
+    {
+        $user = $request->user();
+
+        if (! $user->can('handover.comment') && ! $user->can('handover.assign')) {
+            abort(403, 'You do not have permission to modify this handover request.');
+        }
+
+        if ($user->can('handover.assign')) {
+            return; // coordinating role (FMMP) may compile snags/inspections/documents.
+        }
+
+        $partyCompanyIds = array_values(array_filter([
+            $handoverRequest->responsible_company_id,
+            $handoverRequest->submitted_by_company_id,
+        ]));
+
+        if ($partyCompanyIds === [] || ! $this->actorBelongsToParty($user, $handoverRequest->organization_id, $partyCompanyIds)) {
+            abort(403, 'Only a participating party may modify this handover request.');
+        }
+    }
+
+    /**
+     * @param  array<int, int>  $companyIds
+     */
+    private function actorBelongsToParty(User $user, int $organizationId, array $companyIds): bool
+    {
+        if ($companyIds === []) {
+            return false;
+        }
+
+        return DB::table('company_user')
+            ->where('organization_id', $organizationId)
+            ->where('user_id', $user->id)
+            ->where('is_active', true)
+            ->whereIn('company_id', $companyIds)
+            ->exists();
     }
 
     public function events(Request $request, HandoverRequest $handoverRequest): JsonResponse

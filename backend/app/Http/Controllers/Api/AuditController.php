@@ -122,7 +122,9 @@ class AuditController extends Controller
             ->when(! empty($validated['subject_id']), fn ($q) => $q->where('subject_id', (int) $validated['subject_id']))
             ->when(! empty($validated['project_id']), fn ($q) => $q->where('project_id', (int) $validated['project_id']))
             ->when(! empty($validated['actor_role']), fn ($q) => $q->where('actor_role', $validated['actor_role']))
-            ->when(! empty($validated['date_from']), fn ($q) => $q->where('created_at', '>=', $validated['date_from']))
-            ->when(! empty($validated['date_to']), fn ($q) => $q->where('created_at', '<=', $validated['date_to']));
+            // whereDate compares the DATE portion, so a date-only date_to is inclusive
+            // of the whole day (a plain '<=' on a date-only value would drop same-day events).
+            ->when(! empty($validated['date_from']), fn ($q) => $q->whereDate('created_at', '>=', $validated['date_from']))
+            ->when(! empty($validated['date_to']), fn ($q) => $q->whereDate('created_at', '<=', $validated['date_to']));
     }
 }

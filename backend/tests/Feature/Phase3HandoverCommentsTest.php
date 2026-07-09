@@ -173,6 +173,49 @@ class Phase3HandoverCommentsTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_reattaching_a_mandatory_snag_does_not_downgrade_it(): void
+    {
+        $request = $this->requests->create($this->users['contractor'], $this->org->id, $this->project->id, ['title' => 'No downgrade']);
+        $snag = Snag::factory()->create(['organization_id' => $this->org->id, 'project_id' => $this->project->id]);
+
+        $this->requests->attachSnags($this->users['contractor'], $request, [$snag->id], true);
+        $this->assertDatabaseHas('handover_request_snags', [
+            'handover_request_id' => $request->id, 'snag_id' => $snag->id, 'is_mandatory' => true,
+        ]);
+
+        // A subsequent non-mandatory re-attach must NOT downgrade it out of the close gate.
+        $this->requests->attachSnags($this->users['contractor'], $request, [$snag->id], false);
+        $this->assertDatabaseHas('handover_request_snags', [
+            'handover_request_id' => $request->id, 'snag_id' => $snag->id, 'is_mandatory' => true,
+        ]);
+    }
+
+    public function test_read_only_auditor_cannot_attach_snags_or_documents(): void
+    {
+        $request = $this->submittedRequest(); // stage 2, consultant
+
+        $auditor = User::factory()->create();
+        $this->org->users()->attach($auditor->id, ['is_active' => true]);
+        setPermissionsTeamId($this->org->id);
+        $auditor->assignRole('auditor');
+        Sanctum::actingAs($auditor);
+
+        $snag = Snag::factory()->create([
+            'organization_id' => $this->org->id, 'project_id' => $this->project->id,
+        ]);
+
+        // The read-only auditor may view but must not modify the record / its close gate.
+        $this->withHeaders($this->headers())
+            ->postJson("/api/handovers/requests/{$request->id}/snags", ['snag_ids' => [$snag->id]])
+            ->assertForbidden();
+
+        // The originating party (contractor) still may.
+        Sanctum::actingAs($this->users['contractor']);
+        $this->withHeaders($this->headers())
+            ->postJson("/api/handovers/requests/{$request->id}/snags", ['snag_ids' => [$snag->id]])
+            ->assertOk();
+    }
+
     public function test_open_mandatory_snag_blocks_close_unless_recorded_exception(): void
     {
         $request = $this->requests->create($this->users['contractor'], $this->org->id, $this->project->id, [
